@@ -10,7 +10,7 @@
         "depends_on": [],
         "organisation_id": null,
         "image_name": "registry.doover.com/apps/hmi_engine:main",
-        "container_registry_profile_id": 207438204347877900,
+        "container_registry_profile_id": "207438204347877900",
         "build_args": "--platform linux/amd64,linux/arm64",
         "config_schema": {
             "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -292,20 +292,6 @@
                     }
                 }
             }
-        },
-        "id": 217833726841765127,
-        "key": null,
-        "owner_org_id": null,
-        "code_repo_id": null,
-        "repo_branch": "main",
-        "lambda_config": null,
-        "icon_url": null,
-        "banner_url": null,
-        "staging_config": {},
-        "build_widget_command": null,
-        "export_config_command": null,
-        "export_ui_command": null,
-        "run_command": null,
-        "lambda_arn": null
+        }
     }
 }

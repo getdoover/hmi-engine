@@ -17,8 +17,10 @@ class HMIEngineConfig(config.Schema):
         default=None,
         description=(
             "The page to display. Leave blank to show the widget of the app "
-            "that named hmi_engine in its dependencies, served locally by "
-            "the device agent. Supports {device_agent_url}, {widget_channel}, "
+            "that named hmi_engine in its dependencies, served locally by the "
+            "device agent. If more than one app here has a widget, put the "
+            "install name of the one you want (e.g. petronash_hmi_1). A full "
+            "URL also works and may use {device_agent_url}, {widget_channel}, "
             "{app_key}, {agent_id} and {org_id}, so one config profile works "
             "across a fleet."
         ),

@@ -25,6 +25,8 @@ from .source import (
     agent_id_of,
     choose_source,
     find_widget_apps,
+    is_install_name,
+    pick_named,
     resolve_url,
 )
 
@@ -200,15 +202,25 @@ class HMIEngineApplication(Application):
         platform has nowhere to put config for a dependent. So a blank URL is
         not a misconfiguration, it is the normal case: find the app that ships
         a widget and show the copy the device agent serves locally.
+
+        The one knob takes three forms. Blank is the case above. A bare app
+        name picks between several widget apps, because that is what this app's
+        own ambiguity message asks for and so what people type. Anything else
+        is a URL, expanded as a template.
         """
         configured = (self.config.url.value or "").strip()
-        template = configured or DEFAULT_URL
+        named = is_install_name(configured)
+        template = DEFAULT_URL if named or not configured else configured
 
         source = None
         agent_id = ""
         if "{" in template:
             aggregate = await self._deployment_config()
-            source = choose_source(find_widget_apps(aggregate, self.app_key), template)
+            candidates = find_widget_apps(aggregate, self.app_key)
+            if named:
+                source = pick_named(candidates, configured, aggregate)
+            else:
+                source = choose_source(candidates, template)
             agent_id = agent_id_of(aggregate, self.app_key)
 
             if not configured and source is None:

@@ -47,7 +47,7 @@ which always works.
 
 | Key | Default | Meaning |
 |---|---|---|
-| `url` | auto | The page to display. Blank means "the widget of the app that asked for a screen" — see below |
+| `url` | auto | The page to display. Blank means "the widget of the app that asked for a screen"; the install name of a widget app picks between several; anything else is a URL or template — see below |
 | `zoom` | `1.0` | Page zoom. Below 1 fits a desktop layout onto a small panel |
 | `output` | auto | Connector, e.g. `HDMI-A-1` |
 | `mode` | preferred | e.g. `1280x720@60`. Driving a 1080p panel at 720p roughly halves the work with no GPU |
@@ -127,8 +127,39 @@ Anything about the screen — zoom, mode, rotation — stays on the engine insta
 where the panel is. The widget app doesn't get an opinion about hardware it
 can't see.
 
-Two widget apps on one device is the one case a default can't decide. The engine
-says so on `last_error` rather than guessing; write the URL out to pick one.
+Several widget apps on one device is the one case a default can't decide. The
+engine says so on `last_error` — naming the installs it found — rather than
+guessing, and the answer is to put the install name of the one you want in
+`url`:
+
+```
+Several widget apps here; set URL to the install name of the one you want,
+e.g. data_report_segmenter_1. They are: data_report_segmenter_1,
+petronash_hmi_1, petronash_pump_controller_1
+```
+
+The instruction comes first because the tag is cut to 200 characters, and a
+device with a handful of widget apps writes more than that.
+
+### What `url` accepts
+
+One knob, three forms:
+
+| You write | You get |
+|---|---|
+| nothing | the widget of the app that pulled this one in — the normal case |
+| `petronash_hmi_1` | that install's widget. The application name (`petronash_hmi`) works too, when only one install of it is here |
+| `http://…` or a template | exactly that, with any placeholders expanded |
+
+A name is anything with no scheme, path, placeholder or space in it, so a
+written-out URL is never taken for a name. The reverse has one hole: a
+scheme-less address such as `192.168.1.50` or `dashboard.local` looks exactly
+like a name and is read as one — give a page its `http://` and it goes to the
+browser (which wouldn't have loaded it without one either).
+
+A name that isn't a widget app here is reported on `last_error` with the ones
+that are, rather than being handed to the browser — which is what used to
+happen, and got "The URL can't be shown" every five seconds on a blank panel.
 
 ### URL templates
 

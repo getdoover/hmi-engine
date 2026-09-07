@@ -39,10 +39,16 @@ src/hmi_engine/source.py       # widget-app discovery + URL templating
   is why a keyboard-less panel never meets a login screen — don't "fix" the
   default URL to point at `<org>.doover.com/agent/<id>`, which is behind
   FusionAuth.
-- **One knob for what to show, and it is `url`.** There is deliberately no
+- **One knob for what to show, and it is `url`.** It takes blank (find the app
+  that pulled us in), an install name, or a URL/template — `is_install_name`
+  tells the last two apart, and `pick_named` resolves a name. The name form
+  exists because the ambiguity message *asks* the operator to pick an app, and
+  a bare name is what people type in answer: a device with three widget apps
+  had `petronash_hmi_1` typed into `url` and got "The URL can't be shown" every
+  five seconds on a blank panel. There is still deliberately no
   "device agent URL" or "source app" setting: the agent's web port is fixed at
-  49100, and the one case a default can't decide — two widget apps, one panel —
-  is answered by writing the URL out. Adding a config element to cover an edge
+  49100, and the one case a default can't decide — several widget apps, one
+  panel — is answered in the same box. Adding a config element to cover an edge
   case makes the common install look like it has decisions to make.
 - **A config element's key comes from its display name, not the attribute**
   (`config.String("Reload Interval (min)")` exports as `reload_interval_min`,

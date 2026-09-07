@@ -88,11 +88,6 @@ def agent_id_of(aggregate: dict, app_key: str) -> str:
     return ""
 
 
-def fields_in(template: str) -> set[str]:
-    """Placeholder names in a URL template, ignoring literal text."""
-    return {name for _, name, _, _ in Formatter().parse(template) if name}
-
-
 class UnresolvedURL(Exception):
     """The URL needs something the device hasn't told us yet.
 
@@ -101,6 +96,21 @@ class UnresolvedURL(Exception):
     every cycle, so an install created before its widget app finishes deploying
     fixes itself once the widget publishes its config.
     """
+
+
+def fields_in(template: str) -> set[str]:
+    """Placeholder names in a URL template, ignoring literal text.
+
+    A half-typed template — `{widget_channel` with the brace missing — makes
+    `Formatter.parse` raise `ValueError`, which is a typo in a config box, not
+    a bug here. Letting it out takes the app down; as an `UnresolvedURL` it
+    lands on `last_error` like every other thing wrong with this knob.
+    """
+    try:
+        parsed = list(Formatter().parse(template))
+    except ValueError as exc:
+        raise UnresolvedURL(f"URL is not a usable template: {exc}") from None
+    return {name for _, name, _, _ in parsed if name}
 
 
 def resolve_url(
@@ -140,7 +150,80 @@ def resolve_url(
     if unknown:
         raise UnresolvedURL(f"URL has unknown placeholder(s): {', '.join(unknown)}")
 
-    return template.format(**values)
+    try:
+        return template.format(**values)
+    except (ValueError, KeyError, IndexError) as exc:
+        # `fields_in` has already vetted the names; what is left is a bad
+        # conversion or format spec (`{agent_id:d}`), which is still a typo.
+        raise UnresolvedURL(f"URL is not a usable template: {exc}") from None
+
+
+def is_install_name(value: str) -> bool:
+    """True when a configured `url` is really the name of an app on this device.
+
+    When two widget apps share a panel this app asks the operator to pick one by
+    name, so a bare name is exactly what gets typed back into the box. Anything
+    written as a URL carries a scheme, a path or a placeholder, so a name never
+    swallows a page someone meant to show — with one exception: a scheme-less
+    address (`192.168.1.50`) looks exactly like a name, and is read as one.
+    That costs nothing, because the browser rejects a scheme-less string too;
+    `pick_named` just answers it with a message that names the http:// case.
+    """
+    value = (value or "").strip()
+    if not value:
+        return False
+    return not any(c in value for c in "{}/:") and not any(c.isspace() for c in value)
+
+
+def pick_named(candidates: list[SourceApp], name: str, aggregate: dict) -> SourceApp:
+    """The widget app the operator named, or a message that helps them fix it.
+
+    An install name is what the ambiguity message asks for, but people also type
+    the application name — one install of it is still unambiguous. Everything
+    else is a typo or a misunderstanding, and each has its own answer: naming an
+    app that is here but ships no widget is a different mistake from naming one
+    that isn't here at all, and a panel showing nothing is no help in telling
+    them apart.
+
+    Every message here leads with what to do, because `last_error` is truncated
+    to 200 characters and a list of installs can run past that on its own.
+    """
+    for app in candidates:
+        if app.app_key == name:
+            return app
+
+    same_application = [a for a in candidates if a.application == name]
+    if len(same_application) == 1:
+        return same_application[0]
+    if same_application:
+        keys = ", ".join(a.app_key for a in same_application)
+        raise UnresolvedURL(
+            f"Set URL to the install name of the {name} install you want, e.g. "
+            f"{same_application[0].app_key}. They are: {keys}"
+        )
+
+    apps = (aggregate or {}).get("applications") or {}
+    # An operator reads application names in the console, not install keys, so
+    # `modbus_bridge` has to reach the same answer as `modbus_bridge_1`.
+    if name in apps or any(
+        isinstance(e, dict) and str(e.get("APPLICATION_NAME") or "") == name
+        for e in apps.values()
+    ):
+        raise UnresolvedURL(
+            f"{name} is installed here but ships no widget; "
+            "set URL to a page to display instead"
+        )
+
+    if not candidates:
+        raise UnresolvedURL(
+            f"No widget app called {name} on this device, and nothing here "
+            "ships a widget yet; a page of your own needs its http://"
+        )
+    here = ", ".join(c.app_key for c in candidates)
+    raise UnresolvedURL(
+        f"No widget app called {name} here; set URL to one of {here}, or to a "
+        "page of your own with its http://"
+    )
 
 
 def choose_source(candidates: list[SourceApp], template: str) -> SourceApp | None:
@@ -149,9 +232,14 @@ def choose_source(candidates: list[SourceApp], template: str) -> SourceApp | Non
     Ambiguity only matters when the template actually names the app, which the
     default one does — two widget apps on a device with a single panel is a
     question only a person can answer, and guessing puts the wrong dashboard on
-    a wall. The answer is to write the URL out; there is no separate knob for
-    picking one, because a device with two panels' worth of dashboards and one
-    panel is already past what a default can decide.
+    a wall. The answer goes in the same box, so the message says what to type:
+    an install name, which `pick_named` resolves. There is still no separate
+    knob for picking one.
+
+    The instruction comes before the list of installs because `last_error` is
+    truncated to 200 characters: four installs are enough to run past that, and
+    losing the list still leaves an operator told what to do, where losing the
+    instruction leaves them with names and no idea where to put one.
     """
     if not candidates:
         return None
@@ -159,7 +247,8 @@ def choose_source(candidates: list[SourceApp], template: str) -> SourceApp | Non
     if len(candidates) > 1 and "app_key" in fields_in(template):
         names = ", ".join(c.app_key for c in candidates)
         raise UnresolvedURL(
-            f"Several widget apps here ({names}); set URL to the one you want"
+            "Several widget apps here; set URL to the install name of the one "
+            f"you want, e.g. {candidates[0].app_key}. They are: {names}"
         )
 
     return candidates[0]

@@ -13,6 +13,8 @@ from hmi_engine.source import (
     agent_id_of,
     choose_source,
     find_widget_apps,
+    is_install_name,
+    pick_named,
     resolve_url,
 )
 
@@ -111,6 +113,119 @@ class TestChooseSource:
         with pytest.raises(UnresolvedURL, match="set URL"):
             choose_source(found, DEFAULT_URL)
 
+    def test_the_message_says_what_to_type(self):
+        """A panel showed nothing for an afternoon because the old message read
+        as "type a URL" and the operator typed an app name. It now asks for the
+        name, and an example of one that would work."""
+        found = find_widget_apps(aggregate(a_1=install(widget=True), b_1=install(widget=True)))
+        with pytest.raises(UnresolvedURL, match="install name of the one you want, e.g. a_1"):
+            choose_source(found, DEFAULT_URL)
+
+    def test_the_instruction_survives_the_tag(self):
+        """`last_error` is cut to 200 characters, and a device with a handful of
+        widget apps writes more than that. Whatever is lost, it is names off the
+        end of the list — never the sentence saying where to put one."""
+        found = find_widget_apps(
+            aggregate(
+                **{
+                    f"petronash_pump_controller_{n}": install(widget=True)
+                    for n in range(1, 8)
+                }
+            )
+        )
+        with pytest.raises(UnresolvedURL) as caught:
+            choose_source(found, DEFAULT_URL)
+        assert len(str(caught.value)) > 200
+        assert "set URL to the install name" in str(caught.value)[:200]
+        assert "e.g. petronash_pump_controller_1" in str(caught.value)[:200]
+
+
+class TestIsInstallName:
+    def test_a_bare_name_is_a_name(self):
+        assert is_install_name("petronash_hmi_1")
+
+    def test_blank_is_not(self):
+        """Blank means "work it out", which is the normal case."""
+        assert not is_install_name("")
+        assert not is_install_name("   ")
+
+    def test_a_url_is_not(self):
+        assert not is_install_name("http://localhost:8080")
+        assert not is_install_name("https://x.doover.com/agent/1")
+
+    def test_a_template_is_not(self):
+        assert not is_install_name(DEFAULT_URL)
+        assert not is_install_name("{device_agent_url}/widget/x")
+
+    def test_anything_with_a_space_is_not(self):
+        """Not a name we could match, and not a URL either — treat it as a URL
+        so the browser reports it rather than us guessing at an app."""
+        assert not is_install_name("petronash hmi 1")
+
+
+class TestPickNamed:
+    def device(self):
+        return aggregate(
+            data_report_segmenter_1=install(
+                widget=True, application="data_report_segmenter"
+            ),
+            petronash_hmi_1=install(widget=True, application="petronash_hmi"),
+            petronash_pump_controller_1=install(
+                widget=True, application="petronash_pump_controller"
+            ),
+            modbus_bridge_1=install(application="modbus_bridge"),
+        )
+
+    def candidates(self, data=None):
+        return find_widget_apps(data or self.device(), exclude="hmi_engine_1")
+
+    def test_matches_the_install_name(self):
+        """What the ambiguity message asks for, and what was typed on the day
+        this was needed."""
+        picked = pick_named(self.candidates(), "petronash_hmi_1", self.device())
+        assert picked.app_key == "petronash_hmi_1"
+
+    def test_matches_a_unique_application_name(self):
+        """The install suffix is platform bookkeeping; nobody should have to
+        know it when only one install could be meant."""
+        picked = pick_named(self.candidates(), "petronash_hmi", self.device())
+        assert picked.app_key == "petronash_hmi_1"
+
+    def test_two_installs_of_one_application_still_need_picking(self):
+        data = aggregate(
+            pump_1=install(widget=True, application="pump"),
+            pump_2=install(widget=True, application="pump"),
+        )
+        with pytest.raises(UnresolvedURL, match="pump_1, pump_2"):
+            pick_named(self.candidates(data), "pump", data)
+
+    def test_an_app_that_is_here_but_ships_no_widget_says_so(self):
+        """Different mistake, different answer: the name was right, the app
+        just has no page to show."""
+        with pytest.raises(UnresolvedURL, match="ships no widget"):
+            pick_named(self.candidates(), "modbus_bridge_1", self.device())
+
+    def test_by_application_name_too(self):
+        """The console shows applications, so `modbus_bridge` is at least as
+        likely to be typed as the install key — and it is the same mistake."""
+        with pytest.raises(UnresolvedURL, match="ships no widget"):
+            pick_named(self.candidates(), "modbus_bridge", self.device())
+
+    def test_an_unknown_name_lists_what_is_here(self):
+        with pytest.raises(UnresolvedURL, match="petronash_hmi_1, petronash_pump_controller_1"):
+            pick_named(self.candidates(), "petronash_hmy_1", self.device())
+
+    def test_says_when_nothing_here_has_a_widget(self):
+        """An install deployed before its widget app — listing an empty set of
+        candidates would read as "your name is wrong"."""
+        data = aggregate(modbus_bridge_1=install())
+        with pytest.raises(UnresolvedURL, match="ships a widget yet"):
+            pick_named(self.candidates(data), "petronash_hmi_1", data)
+
+    def test_matching_is_exact(self):
+        with pytest.raises(UnresolvedURL, match="No widget app called"):
+            pick_named(self.candidates(), "Petronash_HMI_1", self.device())
+
 
 class TestResolveURL:
     def widget(self, key="indratel_demo_1", **kwargs):
@@ -160,3 +275,14 @@ class TestResolveURL:
     def test_rejects_a_placeholder_it_cannot_fill(self):
         with pytest.raises(UnresolvedURL, match="nonsense"):
             resolve_url("https://x/{nonsense}", agent_id="7788", source=None)
+
+    def test_a_half_typed_template_is_a_config_mistake_not_a_crash(self):
+        """A missing brace used to raise ValueError out of `start_session`,
+        which takes the app down; every other thing wrong with this box puts a
+        line on `last_error` and waits for the watchdog."""
+        with pytest.raises(UnresolvedURL, match="not a usable template"):
+            resolve_url("https://x/{widget_channel", agent_id="7788", source=None)
+
+    def test_a_bad_format_spec_is_the_same_mistake(self):
+        with pytest.raises(UnresolvedURL, match="not a usable template"):
+            resolve_url("https://x/{agent_id:d}", agent_id="7788", source=None)

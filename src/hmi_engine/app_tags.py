@@ -1,7 +1,7 @@
 from pydoover.tags import Tag, Tags
 
 
-class KioskDisplayTags(Tags):
+class HMIEngineTags(Tags):
     """What the app found and what it is doing, so a display that is not
     showing what it should can be diagnosed without a monitor or an SSH key."""
 

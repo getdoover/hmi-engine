@@ -1,4 +1,4 @@
-# Kiosk Display
+# HMI Engine
 
 A Doover device app that shows a web page on the device's own display. It brings
 its own compositor and browser because the target devices have neither.
@@ -9,26 +9,26 @@ its own compositor and browser because the target devices have neither.
 uv sync
 uv run pytest                                    # detection + config generation
 uv run export-config && uv run export-ui         # -> doover_config.json
-docker buildx build --platform linux/arm64 -t kiosk-display .
+docker buildx build --platform linux/arm64 -t hmi-engine .
 ```
 
 ## Structure
 
 ```
-src/kiosk_display/display.py      # detect connector, card, modes, GPU usability
-src/kiosk_display/session.py      # sway config generation + process supervision
-src/kiosk_display/browser.py      # fullscreen WebKitGTK window (standalone)
-src/kiosk_display/application.py  # Doover app: config, tags, UI, watchdog
-src/kiosk_display/source.py       # widget-app discovery + URL templating
+src/hmi_engine/display.py      # detect connector, card, modes, GPU usability
+src/hmi_engine/session.py      # sway config generation + process supervision
+src/hmi_engine/browser.py      # fullscreen WebKitGTK window (standalone)
+src/hmi_engine/application.py  # Doover app: config, tags, UI, watchdog
+src/hmi_engine/source.py       # widget-app discovery + URL templating
 ```
 
 ## Things that will bite you
 
 - **A blank URL is the normal case, not a broken install.** A widget app makes
-  itself a kiosk with `"depends_on": ["kiosk_display"]`; the platform then
-  creates the kiosk install *bare*, because a dependent install has nowhere to
+  itself an HMI panel with `"depends_on": ["hmi_engine"]`; the platform then
+  creates the engine install *bare*, because a dependent install has nowhere to
   get config from (`ApplicationInstallation.save` in doover-control). So the
-  kiosk finds its own page: it reads the device's `deployment_config` aggregate
+  engine finds its own page: it reads the device's `deployment_config` aggregate
   and looks for an entry carrying `dv_widget_url`, which the platform sets only
   for apps that ship a widget. Don't move that declaration into the widget's
   own config — the point is that a widget repo adds one line and nothing else.
@@ -51,7 +51,7 @@ src/kiosk_display/source.py       # widget-app discovery + URL templating
   the `deployment_config` aggregate, fetched via `device_agent`. Every entry
   carries `AGENT_ID`, `ORGANISATION_ID`, `APPLICATION_NAME` and `APP_KEY`.
 - **Anything unknown at startup raises `UnresolvedURL`, never an exception.**
-  A kiosk deployed before its widget app, or a failed aggregate fetch, both
+  An install deployed before its widget app, or a failed aggregate fetch, both
   mean "try again shortly" — the watchdog does exactly that. Letting it escape
   `setup()` takes the app down instead of self-healing.
 - **One subscription: the widget channel.** It carries the bundle, so an update
@@ -66,12 +66,12 @@ src/kiosk_display/source.py       # widget-app discovery + URL templating
   one currently on screen and no-ops on a stale one.
 - **The browser is a grandchild, found via `/proc`.** sway launches it with
   `exec_always`, so there is no handle — `session.browser_pids` scans for
-  `kiosk_browser.py`. Keep it dependency-free; adding procps to the image just
+  `hmi_browser.py`. Keep it dependency-free; adding procps to the image just
   to run `pkill` is a bigger change than it looks (see the file-capabilities
   note below).
 - **Two Pythons, on purpose.** PyGObject is compiled against the distro
   interpreter; the app venv is a different minor version and cannot load `_gi`.
-  The browser is copied to `/usr/local/lib/kiosk_browser.py` and run with
+  The browser is copied to `/usr/local/lib/hmi_browser.py` and run with
   `/usr/bin/python3`. Don't "tidy" it into the venv.
 - **Never assume `card0`.** The DRM card that owns the connected connector is
   whichever `cardN-<connector>` sysfs entry says; on an i.MX8 the display pipe
@@ -101,7 +101,7 @@ Publish to a registry and `docker pull` where you can. When you must side-load,
 stream it — do not stage a tarball on the device first:
 
 ```sh
-docker save kiosk-display:test | gzip -1 | \
+docker save hmi-engine:test | gzip -1 | \
   ssh root@device 'docker load'
 ```
 

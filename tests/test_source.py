@@ -6,7 +6,7 @@ page or nothing at all, on a device nobody has a keyboard for.
 
 import pytest
 
-from kiosk_display.source import (
+from hmi_engine.source import (
     DEVICE_AGENT_URL,
     DEFAULT_URL,
     UnresolvedURL,
@@ -38,13 +38,13 @@ def install(widget=False, agent="7788", org="1234", application="some_app", chan
 class TestFindWidgetApps:
     def test_finds_the_app_that_ships_a_widget(self):
         data = aggregate(
-            kiosk_display_1=install(),
+            hmi_engine_1=install(),
             platform=install(),
             indratel_demo_1=install(
                 widget=True, application="indratel_demo", channel="indratel_demo_1_widget"
             ),
         )
-        found = find_widget_apps(data, exclude="kiosk_display_1")
+        found = find_widget_apps(data, exclude="hmi_engine_1")
         assert [a.app_key for a in found] == ["indratel_demo_1"]
         assert found[0].application == "indratel_demo"
         assert found[0].agent_id == "7788"
@@ -56,8 +56,8 @@ class TestFindWidgetApps:
         assert find_widget_apps(aggregate(analog_flow_meter_1=install())) == []
 
     def test_never_returns_itself(self):
-        data = aggregate(kiosk_display_1=install(widget=True))
-        assert find_widget_apps(data, exclude="kiosk_display_1") == []
+        data = aggregate(hmi_engine_1=install(widget=True))
+        assert find_widget_apps(data, exclude="hmi_engine_1") == []
 
     def test_survives_an_aggregate_that_has_not_arrived(self):
         assert find_widget_apps({}) == []
@@ -73,17 +73,17 @@ class TestFindWidgetApps:
 class TestAgentId:
     def test_prefers_our_own_entry(self):
         data = aggregate(
-            kiosk_display_1=install(agent="111"), other_1=install(agent="222")
+            hmi_engine_1=install(agent="111"), other_1=install(agent="222")
         )
-        assert agent_id_of(data, "kiosk_display_1") == "111"
+        assert agent_id_of(data, "hmi_engine_1") == "111"
 
     def test_falls_back_to_any_entry(self):
         """Our own entry is written by our own deployment; borrowing another
         app's is better than refusing to start over a missing key."""
-        assert agent_id_of(aggregate(other_1=install(agent="222")), "kiosk_display_1") == "222"
+        assert agent_id_of(aggregate(other_1=install(agent="222")), "hmi_engine_1") == "222"
 
     def test_reports_nothing_when_the_device_is_silent(self):
-        assert agent_id_of({}, "kiosk_display_1") == ""
+        assert agent_id_of({}, "hmi_engine_1") == ""
 
 
 class TestChooseSource:

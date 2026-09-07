@@ -1,15 +1,15 @@
 {
-    "kiosk_display": {
-        "name": "kiosk_display",
-        "display_name": "HMI Kiosk Display",
+    "hmi_engine": {
+        "name": "hmi_engine",
+        "display_name": "HMI Display Engine",
         "type": "DEV",
-        "visibility": "PUB",
+        "visibility": "COR",
         "allow_many": true,
         "description": "Show any web page on a Linux device's own display - a self-contained Wayland kiosk that brings its own compositor, browser and software renderer",
         "long_description": "README.md",
         "depends_on": [],
         "organisation_id": null,
-        "image_name": "registry.doover.com/apps/kiosk_display:main",
+        "image_name": "registry.doover.com/apps/hmi_engine:main",
         "build_args": "--platform linux/amd64,linux/arm64",
         "config_schema": {
             "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -26,7 +26,7 @@
                         "null"
                     ],
                     "x-required": false,
-                    "description": "The page to display. Leave blank to show the widget of the app that named kiosk_display in its dependencies, served locally by the device agent. Supports {device_agent_url}, {widget_channel}, {app_key}, {agent_id} and {org_id}, so one config profile works across a fleet.",
+                    "description": "The page to display. Leave blank to show the widget of the app that named hmi_engine in its dependencies, served locally by the device agent. Supports {device_agent_url}, {widget_channel}, {app_key}, {agent_id} and {org_id}, so one config profile works across a fleet.",
                     "default": null,
                     "x-position": 0
                 },

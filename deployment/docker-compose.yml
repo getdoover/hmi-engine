@@ -1,6 +1,6 @@
 services:
-  kiosk_display:
-    image: registry.doover.com/apps/kiosk_display:main
+  hmi_engine:
+    image: registry.doover.com/apps/hmi_engine:main
     restart: unless-stopped
     network_mode: host
 

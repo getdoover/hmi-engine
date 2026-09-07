@@ -1,7 +1,7 @@
 """Work out what to draw on, and how, without being told.
 
-A kiosk that has to be handed the card, the connector and the renderer is a
-kiosk that only works on the board it was written for. Everything here is read
+A display app that has to be handed the card, the connector and the renderer
+only works on the board it was written for. Everything here is read
 from sysfs at startup so the same image runs on a Raspberry Pi with a VideoCore
 GPU, an i.MX8 with a vendor driver Mesa cannot use, and a QEMU guest with no GPU
 at all.

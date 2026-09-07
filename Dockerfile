@@ -78,6 +78,6 @@ ENV PATH="/app/.venv/bin:$PATH"
 # compiled extension built against the distro interpreter, and the venv is on a
 # different minor version. The supervising app keeps its venv; the window it
 # launches gets a standalone script and the interpreter that can load `_gi`.
-COPY src/kiosk_display/browser.py /usr/local/lib/kiosk_browser.py
+COPY src/hmi_engine/browser.py /usr/local/lib/hmi_browser.py
 
 CMD ["doover-app-run"]

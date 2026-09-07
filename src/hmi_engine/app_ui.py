@@ -2,10 +2,10 @@ from pathlib import Path
 
 from pydoover import ui
 
-from .app_tags import KioskDisplayTags as Tags
+from .app_tags import HMIEngineTags as Tags
 
 
-class KioskDisplayUI(ui.UI):
+class HMIEngineUI(ui.UI):
     showing = ui.BooleanVariable("Showing", value=Tags.showing, name="showing")
     output = ui.TextVariable("Output", value=Tags.output, name="output")
     mode = ui.TextVariable("Mode", value=Tags.mode, name="mode")
@@ -27,9 +27,9 @@ class KioskDisplayUI(ui.UI):
 
 
 def export():
-    KioskDisplayUI(None, None, None).export(
+    HMIEngineUI(None, None, None).export(
         Path(__file__).parents[2] / "doover_config.json",
-        "kiosk_display",
+        "hmi_engine",
     )
 
 

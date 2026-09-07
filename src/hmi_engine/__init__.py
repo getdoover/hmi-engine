@@ -1,4 +1,4 @@
-"""Kiosk display app.
+"""HMI engine app.
 
 `main` imports the application lazily so that `display` and `session` stay
 importable on their own — they have no pydoover dependency, and the browser
@@ -10,6 +10,6 @@ def main():
     """Run the application."""
     from pydoover.docker import run_app
 
-    from .application import KioskDisplayApplication
+    from .application import HMIEngineApplication
 
-    run_app(KioskDisplayApplication())
+    run_app(HMIEngineApplication())

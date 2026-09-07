@@ -3,7 +3,7 @@ from pathlib import Path
 from pydoover import config
 
 
-class KioskDisplayConfig(config.Schema):
+class HMIEngineConfig(config.Schema):
     """Everything is optional, including the URL.
 
     Defaults are all "work it out": the app finds the connected display, its
@@ -17,7 +17,7 @@ class KioskDisplayConfig(config.Schema):
         default=None,
         description=(
             "The page to display. Leave blank to show the widget of the app "
-            "that named kiosk_display in its dependencies, served locally by "
+            "that named hmi_engine in its dependencies, served locally by "
             "the device agent. Supports {device_agent_url}, {widget_channel}, "
             "{app_key}, {agent_id} and {org_id}, so one config profile works "
             "across a fleet."
@@ -108,7 +108,7 @@ class KioskDisplayConfig(config.Schema):
 
 
 def export():
-    KioskDisplayConfig.export(Path(__file__).parents[2] / "doover_config.json", "kiosk_display")
+    HMIEngineConfig.export(Path(__file__).parents[2] / "doover_config.json", "hmi_engine")
 
 
 if __name__ == "__main__":

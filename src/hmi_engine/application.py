@@ -7,9 +7,9 @@ from pydoover import ui
 from pydoover.docker import Application
 from pydoover.models import EventSubscription
 
-from .app_config import KioskDisplayConfig
-from .app_tags import KioskDisplayTags
-from .app_ui import KioskDisplayUI
+from .app_config import HMIEngineConfig
+from .app_tags import HMIEngineTags
+from .app_ui import HMIEngineUI
 from . import display as display_mod
 from .session import (
     Session,
@@ -30,7 +30,7 @@ from .source import (
 log = logging.getLogger(__name__)
 
 
-class KioskDisplayApplication(Application):
+class HMIEngineApplication(Application):
     """Put a web page on the device's own display and keep it there.
 
     The app owns a compositor and a browser as child processes. Its main loop is
@@ -39,12 +39,12 @@ class KioskDisplayApplication(Application):
     the whole thing back rather than leaving a black screen nobody notices.
     """
 
-    config_cls = KioskDisplayConfig
-    tags_cls = KioskDisplayTags
-    ui_cls = KioskDisplayUI
+    config_cls = HMIEngineConfig
+    tags_cls = HMIEngineTags
+    ui_cls = HMIEngineUI
 
-    config: KioskDisplayConfig
-    tags: KioskDisplayTags
+    config: HMIEngineConfig
+    tags: HMIEngineTags
 
     #: The widget channel carries the bundle itself — an update there is the
     #: new JavaScript having landed, so there is nothing to wait for beyond
@@ -66,7 +66,7 @@ class KioskDisplayApplication(Application):
         try:
             url = await self.resolve_url()
         except UnresolvedURL as exc:
-            # Usually a kiosk that deployed before the app that pulled it in.
+            # Usually an install that deployed before the app that pulled it in.
             # The watchdog comes back every cycle, so this resolves itself.
             await self.tags.last_error.set(str(exc)[:200])
             log.warning("Nothing to show yet: %s", exc)
@@ -118,7 +118,7 @@ class KioskDisplayApplication(Application):
     async def resolve_url(self) -> str:
         """The page to show, which the device usually already knows.
 
-        A widget app that names `kiosk_display` in `depends_on` gets a kiosk
+        A widget app that names `hmi_engine` in `depends_on` gets an
         install created for it automatically — and created bare, because the
         platform has nowhere to put config for a dependent. So a blank URL is
         not a misconfiguration, it is the normal case: find the app that ships
@@ -238,7 +238,7 @@ class KioskDisplayApplication(Application):
     #: The browser runs on the distro Python rather than the app's venv — see
     #: the Dockerfile. Overridable so it can be pointed at a dev checkout.
     BROWSER = os.environ.get(
-        "KIOSK_BROWSER_COMMAND", "/usr/bin/python3 /usr/local/lib/kiosk_browser.py"
+        "HMI_BROWSER_COMMAND", "/usr/bin/python3 /usr/local/lib/hmi_browser.py"
     )
 
     def _browser_command(self, url: str) -> str:

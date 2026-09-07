@@ -1,9 +1,9 @@
 """Work out what this device wants on its panel, from the config it already has.
 
-A widget app makes itself a kiosk by naming `kiosk_display` in its `depends_on`.
-The platform then creates a kiosk install alongside it — but with nothing in its
+A widget app puts itself on the panel by naming `hmi_engine` in its
+`depends_on`. The platform then creates an install of this app alongside it — but with nothing in its
 config, because a dependent install is created bare. Rather than ask the widget
-app to fill that in, the kiosk reads the device's `deployment_config` aggregate
+app to fill that in, this app reads the device's `deployment_config` aggregate
 and finds the app that pulled it in.
 
 The aggregate holds every install on the device under `applications`, keyed by
@@ -98,7 +98,7 @@ class UnresolvedURL(Exception):
 
     Raised rather than returned because every caller has the same recourse:
     say so on a tag and try again later. The watchdog restarts the session
-    every cycle, so a kiosk installed before its widget app finishes deploying
+    every cycle, so an install created before its widget app finishes deploying
     fixes itself once the widget publishes its config.
     """
 

@@ -1,4 +1,4 @@
-# Kiosk Display
+# HMI Engine
 
 Show a web page on a Linux device's own display, and keep it there.
 
@@ -12,7 +12,7 @@ ships one in the container.
 ## What it does
 
 ```
-kiosk-display (this app, supervising)
+hmi-engine (this app, supervising)
   └── sway                     wlroots compositor, output mode pinned
         └── WebKitGTK window   one URL, fullscreen, no chrome
 ```
@@ -47,18 +47,18 @@ which always works.
 | `ignore_tls_errors` | `true` | Device-local pages use self-signed certificates |
 | `conflicting_services` | — | Init scripts to stop first (see below) |
 
-## Making a widget app a kiosk
+## Putting a widget app on the panel
 
 An app with a dashboard widget can put itself on the device's own panel with one
 line in its `doover_config.json`:
 
 ```json
-"depends_on": ["kiosk_display"]
+"depends_on": ["hmi_engine"]
 ```
 
-Installing that app now installs a kiosk beside it — the platform creates an
+Installing that app now installs an HMI engine beside it — the platform creates an
 install for everything in `depends_on`. That install arrives with **no config**,
-because there is nowhere for a dependent's config to come from, so the kiosk
+because there is nowhere for a dependent's config to come from, so the engine
 works out what to show instead of being told:
 
 1. It reads the device's `deployment_config` aggregate, which holds every
@@ -75,15 +75,15 @@ for a keyboard-less panel to get past and no dependence on the device having a
 connection at the moment someone walks past it. It is HTTPS with a self-signed
 certificate, which is what `ignore_tls_errors` defaults to true for.
 
-Order of deployment doesn't matter. A kiosk that starts before its widget app
+Order of deployment doesn't matter. An install that starts before its widget app
 has published its config finds nothing, says so on the `last_error` tag, and the
 watchdog picks it up on the next cycle.
 
-Anything about the screen — zoom, mode, rotation — stays on the kiosk install,
+Anything about the screen — zoom, mode, rotation — stays on the engine install,
 where the panel is. The widget app doesn't get an opinion about hardware it
 can't see.
 
-Two widget apps on one device is the one case a default can't decide. The kiosk
+Two widget apps on one device is the one case a default can't decide. The engine
 says so on `last_error` rather than guessing; write the URL out to pick one.
 
 ### URL templates
@@ -104,18 +104,18 @@ works on a device that has deployed nothing else.
 ## Redeploying a widget updates the panel
 
 Deploying the widget app republishes its bundle to its widget channel — the same
-channel the page is served from. The kiosk subscribes to that channel and to
+channel the page is served from. The engine subscribes to that channel and to
 nothing else, so new JavaScript landing *is* the trigger: a second later the
 browser is sent `SIGHUP` and reloads, bypassing its cache so the new build can't
 be served from the old one. The compositor stays up, so the panel never blanks.
 
 Nothing else causes a reload. Redeploying an unrelated app on the same device
-leaves the page alone, and the kiosk's own config needs no watching — editing an
+leaves the page alone, and the engine's own config needs no watching — editing an
 install's config redeploys it, and redeploying this app restarts the container
 with the new config already in hand.
 
 The browser is started by the compositor, not by this app, so it is found by
-scanning `/proc` for `kiosk_browser.py` rather than kept as a handle. If no
+scanning `/proc` for `hmi_browser.py` rather than kept as a handle. If no
 browser answers, the session is restarted rather than left showing a stale page.
 
 ## Vendor splash screens
@@ -159,7 +159,7 @@ volumes:
 uv sync
 uv run pytest                       # detection and config-generation logic
 uv run export-config && uv run export-ui
-docker buildx build --platform linux/arm64 -t kiosk-display .
+docker buildx build --platform linux/arm64 -t hmi-engine .
 ```
 
 The browser deliberately runs on the **distro** Python rather than the app venv:
@@ -172,11 +172,11 @@ window it launches gets a standalone script and the interpreter that can load
 
 | Path | Purpose |
 |---|---|
-| `src/kiosk_display/source.py` | Which app on this device wanted a screen, and the URL that shows it |
-| `src/kiosk_display/display.py` | Detection — connector, card, modes, whether Mesa can help |
-| `src/kiosk_display/session.py` | Compositor config generation and process supervision |
-| `src/kiosk_display/browser.py` | The fullscreen WebKit window (standalone, distro Python) |
-| `src/kiosk_display/application.py` | Doover app: config, tags, UI, watchdog |
+| `src/hmi_engine/source.py` | Which app on this device wanted a screen, and the URL that shows it |
+| `src/hmi_engine/display.py` | Detection — connector, card, modes, whether Mesa can help |
+| `src/hmi_engine/session.py` | Compositor config generation and process supervision |
+| `src/hmi_engine/browser.py` | The fullscreen WebKit window (standalone, distro Python) |
+| `src/hmi_engine/application.py` | Doover app: config, tags, UI, watchdog |
 | `tests/` | Detection and config-generation, which have to cope with unfamiliar hardware |
 
 ## Relationship to `doover-kiosk`

@@ -1,5 +1,5 @@
 [project]
-name = "kiosk-display"
+name = "hmi-engine"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
@@ -9,10 +9,10 @@ dependencies = [
 ]
 
 [project.scripts]
-doover-app-run = "kiosk_display:main"
-kiosk-browser = "kiosk_display.browser:main"
-export-config = "kiosk_display.app_config:export"
-export-ui = "kiosk_display.app_ui:export"
+doover-app-run = "hmi_engine:main"
+hmi-browser = "hmi_engine.browser:main"
+export-config = "hmi_engine.app_config:export"
+export-ui = "hmi_engine.app_ui:export"
 
 [build-system]
 requires = ["hatchling"]

@@ -2,7 +2,7 @@
 <project version="4">
   <component name="ProjectModuleManager">
     <modules>
-      <module fileurl="file://$PROJECT_DIR$/.idea/kiosk-display.iml" filepath="$PROJECT_DIR$/.idea/kiosk-display.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/hmi-engine.iml" filepath="$PROJECT_DIR$/.idea/hmi-engine.iml" />
     </modules>
   </component>
 </project>

@@ -3,7 +3,7 @@ hardware nobody has tried yet."""
 
 import pytest
 
-from kiosk_display.display import Display, Mode, resolve_mode
+from hmi_engine.display import Display, Mode, resolve_mode
 
 
 def make(modes, connector="HDMI-A-1"):

@@ -2,9 +2,9 @@
 
 import signal
 
-from kiosk_display import session as session_mod
-from kiosk_display.display import Display, Mode
-from kiosk_display.session import (
+from hmi_engine import session as session_mod
+from hmi_engine.display import Display, Mode
+from hmi_engine.session import (
     browser_pids,
     build_sway_config,
     reload_page,
@@ -24,11 +24,11 @@ def make(accelerated=False, dri_path="/usr/lib/dri"):
 
 class TestSwayConfig:
     def test_pins_the_output_mode(self):
-        config = build_sway_config(make(), Mode(1280, 720, 60), 0, True, "kiosk-browser url")
+        config = build_sway_config(make(), Mode(1280, 720, 60), 0, True, "hmi-browser url")
         assert "output HDMI-A-1 mode 1280x720@60Hz" in config
 
     def test_omits_the_mode_when_using_the_panels_preference(self):
-        config = build_sway_config(make(), None, 0, True, "kiosk-browser url")
+        config = build_sway_config(make(), None, 0, True, "hmi-browser url")
         assert "output HDMI-A-1 transform normal" in config
         assert "mode" not in config.split("\n")[1]
 
@@ -48,8 +48,8 @@ class TestSwayConfig:
         assert "output HDMI-A-1 bg #000000 solid_color" in config
 
     def test_launches_the_browser(self):
-        config = build_sway_config(make(), None, 0, True, "kiosk-browser https://x/ --zoom 0.8")
-        assert "exec_always kiosk-browser https://x/ --zoom 0.8" in config
+        config = build_sway_config(make(), None, 0, True, "hmi-browser https://x/ --zoom 0.8")
+        assert "exec_always hmi-browser https://x/ --zoom 0.8" in config
 
 
 class TestSessionEnvironment:
@@ -83,7 +83,7 @@ class TestConflictingServiceNames:
 
     @staticmethod
     def _names(raw):
-        # The unwrapping logic from KioskDisplayApplication, exercised without
+        # The unwrapping logic from HMIEngineApplication, exercised without
         # needing a live pydoover config object.
         names = []
         for item in raw or []:
@@ -131,9 +131,9 @@ class TestBrowserSignalling:
         proc = self.fake_proc(
             tmp_path,
             **{
-                "1": "/usr/bin/python3\x00-m\x00kiosk_display\x00",
-                "42": "sway\x00-c\x00/tmp/kiosk-runtime/sway.conf\x00",
-                "77": "/usr/bin/python3\x00/usr/local/lib/kiosk_browser.py\x00https://localhost:49100/\x00",
+                "1": "/usr/bin/python3\x00-m\x00hmi_engine\x00",
+                "42": "sway\x00-c\x00/tmp/hmi-runtime/sway.conf\x00",
+                "77": "/usr/bin/python3\x00/usr/local/lib/hmi_browser.py\x00https://localhost:49100/\x00",
             },
         )
         assert browser_pids(proc=proc) == [77]
@@ -143,7 +143,7 @@ class TestBrowserSignalling:
         assert browser_pids(proc=proc) == []
 
     def test_tolerates_a_process_exiting_mid_scan(self, tmp_path):
-        proc = self.fake_proc(tmp_path, **{"9": "kiosk_browser.py\x00"})
+        proc = self.fake_proc(tmp_path, **{"9": "hmi_browser.py\x00"})
         (proc / "9" / "cmdline").unlink()
         assert browser_pids(proc=proc) == []
 
@@ -152,14 +152,14 @@ class TestBrowserSignalling:
         assert reload_page(proc=self.fake_proc(tmp_path)) == 0
 
     def test_signals_every_browser_it_finds(self, tmp_path, monkeypatch):
-        proc = self.fake_proc(tmp_path, **{"77": "kiosk_browser.py\x00"})
+        proc = self.fake_proc(tmp_path, **{"77": "hmi_browser.py\x00"})
         sent = []
         monkeypatch.setattr(session_mod.os, "kill", lambda pid, sig: sent.append((pid, sig)))
         assert reload_page(proc=proc) == 1
         assert sent == [(77, signal.SIGHUP)]
 
     def test_a_process_that_dies_before_the_signal_is_not_counted(self, tmp_path, monkeypatch):
-        proc = self.fake_proc(tmp_path, **{"77": "kiosk_browser.py\x00"})
+        proc = self.fake_proc(tmp_path, **{"77": "hmi_browser.py\x00"})
 
         def gone(pid, sig):
             raise ProcessLookupError

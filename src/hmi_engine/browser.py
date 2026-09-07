@@ -71,11 +71,11 @@ class KioskWindow(Gtk.ApplicationWindow):
             log.info("Loaded %s", self.url)
             # Report readiness on stdout so the supervisor can tell "showing the
             # page" from "showing an error" without scraping pixels.
-            print("KIOSK-STATUS loaded", flush=True)
+            print("HMI-STATUS loaded", flush=True)
 
     def _on_load_failed(self, _view, _event, failing_uri, error) -> bool:
         log.warning("Load failed for %s: %s", failing_uri, error.message)
-        print(f"KIOSK-STATUS failed {error.message}", flush=True)
+        print(f"HMI-STATUS failed {error.message}", flush=True)
         self._schedule_retry()
         return True  # we handled it; don't show WebKit's own error page
 
@@ -117,7 +117,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    app = Gtk.Application(application_id="com.doover.kiosk")
+    app = Gtk.Application(application_id="com.doover.hmi")
     window: dict[str, KioskWindow] = {}
 
     def on_activate(application: Gtk.Application) -> None:

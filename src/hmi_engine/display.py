@@ -12,6 +12,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import socket
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -19,6 +20,14 @@ log = logging.getLogger(__name__)
 
 DRM_CLASS = Path("/sys/class/drm")
 DRI_DIR = Path("/dev/dri")
+
+#: Where logind puts each user session's runtime directory, and so where a
+#: compositor already running on the host leaves its socket.
+RUN_USER = Path("/run/user")
+
+#: A dead session's socket file looks exactly like a live one's, so connecting
+#: is the only test that distinguishes them. Local and immediate or not at all.
+CONNECT_TIMEOUT = 1.0
 
 #: Where distributions put Mesa's DRI drivers. Alpine and Debian disagree, and
 #: `LIBGL_DRIVERS_PATH` has to be right or EGL silently falls back to nothing.
@@ -68,6 +77,85 @@ class Display:
 
     def supports(self, mode: Mode) -> bool:
         return any(m.width == mode.width and m.height == mode.height for m in self.modes)
+
+
+@dataclass(frozen=True)
+class HostCompositor:
+    """A Wayland compositor already running on the host, which we can borrow.
+
+    The devices this app was written for have no display stack at all, so it
+    brings its own. A Raspberry Pi running Raspberry Pi OS is the opposite case:
+    lightdm has already autologged into labwc, which holds DRM master on the
+    connector. Two compositors cannot both drive one output — ours loses, every
+    five seconds, forever — so where the host has one, the browser attaches to
+    it instead and the panel is shared rather than fought over.
+    """
+
+    socket_path: Path
+    uid: int
+
+    @property
+    def wayland_display(self) -> str:
+        """What to put in `WAYLAND_DISPLAY`.
+
+        The absolute path rather than the bare socket name: libwayland treats a
+        value starting with `/` as a path and never consults `XDG_RUNTIME_DIR`,
+        which lets that stay pointed at this container's own writable directory
+        and the host's runtime dir be mounted read-only.
+        """
+        return str(self.socket_path)
+
+
+def _connectable(path: Path, timeout: float = CONNECT_TIMEOUT) -> bool:
+    """Whether anything is actually listening on a Unix socket."""
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    sock.settimeout(timeout)
+    try:
+        sock.connect(str(path))
+    except OSError:
+        return False
+    finally:
+        sock.close()
+    return True
+
+
+def find_host_compositor(run_user: Path = RUN_USER) -> HostCompositor | None:
+    """The host's own compositor, if it has one that will talk to us.
+
+    A regular user's session is preferred over a system account's: on a desktop
+    image the screen belongs to whoever logged in, and a compositor running as
+    root is more likely to be a greeter or a leftover. A socket that refuses a
+    connection is the remains of a crashed session and is stepped over rather
+    than trusted — treating one as live would mean handing the browser a
+    display that never appears, which is harder to diagnose than no display.
+    """
+    if not run_user.is_dir():
+        return None
+
+    candidates = []
+    for entry in sorted(run_user.iterdir()):
+        if not entry.name.isdigit():
+            continue
+        try:
+            sockets = sorted(entry.glob("wayland-*"))
+        except OSError:
+            continue  # a runtime dir we are not allowed to read
+        for path in sockets:
+            if path.suffix == ".lock" or not path.is_socket():
+                continue
+            candidates.append((int(entry.name), path))
+
+    # Regular users (uid >= 1000) before system accounts, each in uid order.
+    candidates.sort(key=lambda candidate: (candidate[0] < 1000, candidate[0]))
+
+    for uid, path in candidates:
+        if not _connectable(path):
+            log.info("Ignoring %s: a socket, but nothing is listening", path)
+            continue
+        log.info("Found a compositor already running on the host at %s", path)
+        return HostCompositor(socket_path=path, uid=uid)
+
+    return None
 
 
 def _read(path: Path) -> str:

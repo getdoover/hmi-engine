@@ -14,6 +14,7 @@ from . import display as display_mod
 from .session import (
     Session,
     build_sway_config,
+    host_environment,
     reload_page,
     session_environment,
     stop_conflicting_services,
@@ -33,10 +34,15 @@ log = logging.getLogger(__name__)
 class HMIEngineApplication(Application):
     """Put a web page on the device's own display and keep it there.
 
-    The app owns a compositor and a browser as child processes. Its main loop is
-    a watchdog: if the session dies — a wedged browser, a panel unplugged and
-    replugged, a vendor splash winning a fight for the framebuffer — it brings
-    the whole thing back rather than leaving a black screen nobody notices.
+    The app owns a browser as a child process, and usually a compositor with
+    it: the boards this was written for have no display stack, so it brings
+    one. On a device that already runs a compositor it attaches to that instead
+    — two cannot share an output, and the incumbent always wins.
+
+    Its main loop is a watchdog either way: if the session dies — a wedged
+    browser, a panel unplugged and replugged, a vendor splash winning a fight
+    for the framebuffer — it brings the whole thing back rather than leaving a
+    black screen nobody notices.
     """
 
     config_cls = HMIEngineConfig
@@ -57,6 +63,8 @@ class HMIEngineApplication(Application):
         self._widget_channel = ""
         self._watched: set[str] = set()
         self._reload_task: asyncio.Task | None = None
+        #: Which kind of session was last started, for the watchdog's log line.
+        self._compositor = "own"
         await self.start_session()
 
     async def start_session(self):
@@ -76,6 +84,46 @@ class HMIEngineApplication(Application):
         if stopped:
             log.info("Stopped before starting: %s", ", ".join(stopped))
 
+        # A compositor the host already runs is not a rival to beat but the
+        # only one that can have the output — see `HostCompositor`.
+        host = display_mod.find_host_compositor()
+        self._compositor = "host" if host is not None else "own"
+        if host is not None:
+            await self._start_on_host(host, url)
+        else:
+            await self._start_own_compositor(url)
+
+    async def _start_on_host(self, host, url: str) -> None:
+        """Attach to the host's compositor and let it own the display."""
+        self._warn_about_display_settings()
+
+        # Informational only: the connector is worth reporting so a support tag
+        # still says which panel this is, but nothing here configures it.
+        found = display_mod.detect(self.config.output.value or "")
+        await self.tags.display_found.set(True)
+
+        renderer = self.config.renderer.value or "auto"
+        try:
+            await self.session.start_hosted(
+                self._browser_command(url), host_environment(host, renderer)
+            )
+        except Exception as exc:  # noqa: BLE001 — surface any startup failure as a tag
+            await self.tags.last_error.set(str(exc)[:200])
+            log.exception("Could not start the browser on the host compositor")
+            return
+
+        log.info(
+            "Using the host's compositor at %s; it owns the output, mode and renderer",
+            host.socket_path,
+        )
+        await self.tags.compositor.set("host")
+        await self.tags.output.set(found.connector if found else "")
+        await self.tags.mode.set("host-managed")
+        await self.tags.renderer.set("host-managed")
+        await self._showing(url)
+
+    async def _start_own_compositor(self, url: str) -> None:
+        """Bring up sway on the bare display, the case this app was built for."""
         found = display_mod.detect(self.config.output.value or "")
         await self.tags.display_found.set(found is not None)
         if found is None:
@@ -108,12 +156,41 @@ class HMIEngineApplication(Application):
             log.exception("Could not start the display session")
             return
 
+        await self.tags.compositor.set("own")
         await self.tags.output.set(found.connector)
         await self.tags.mode.set(str(mode) if mode else "preferred")
         await self.tags.renderer.set(effective)
+        await self._showing(url)
+
+    async def _showing(self, url: str) -> None:
         await self.tags.url.set(url)
         await self.tags.last_error.set("")
         await self.tags.showing.set(True)
+
+    def _warn_about_display_settings(self) -> None:
+        """Say which configured settings the host compositor will ignore.
+
+        Silence for a default install — the common case has nothing set — but a
+        panel that is the wrong way up after someone set `rotation` deserves to
+        say why rather than leaving them to conclude the setting is broken.
+        """
+        ignored = []
+        if (self.config.output.value or "").strip():
+            ignored.append("output")
+        if (self.config.mode.value or "").strip():
+            ignored.append("mode")
+        if int(self.config.rotation.value or 0):
+            ignored.append("rotation")
+        if (self.config.renderer.value or "auto") == "gl":
+            ignored.append("renderer")
+        if ignored:
+            log.warning(
+                "The host's compositor owns the display, so %s %s no effect here; "
+                "set %s on the host's own session instead",
+                ", ".join(ignored),
+                "has" if len(ignored) == 1 else "have",
+                "it" if len(ignored) == 1 else "them",
+            )
 
     async def resolve_url(self) -> str:
         """The page to show, which the device usually already knows.
@@ -261,7 +338,11 @@ class HMIEngineApplication(Application):
         self._restarts += 1
         await self.tags.restarts.set(self._restarts)
         await self.tags.showing.set(False)
-        log.warning("Display session is not running; restarting (attempt %s)", self._restarts)
+        log.warning(
+            "Display session (%s compositor) is not running; restarting (attempt %s)",
+            self._compositor,
+            self._restarts,
+        )
 
         await self.session.stop()
         await self.start_session()

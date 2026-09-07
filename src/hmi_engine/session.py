@@ -5,6 +5,11 @@ generally have none — no X, no Wayland, often no GPU userspace at all. sway is
 used rather than a smaller kiosk compositor purely because it is the one that
 can pin an output mode, which is what lets a 1080p panel be driven at 720p to
 save a software renderer a lot of work.
+
+Where the host *does* have a compositor — a Raspberry Pi that has autologged
+into labwc — starting a second one is not an option: it cannot get DRM master
+and dies on a five-second loop. There the browser attaches to the host's
+session instead and this module supervises just that one process.
 """
 
 from __future__ import annotations
@@ -12,11 +17,12 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import shlex
 import shutil
 import signal
 from pathlib import Path
 
-from .display import Display, Mode
+from .display import Display, HostCompositor, Mode
 
 log = logging.getLogger(__name__)
 
@@ -99,6 +105,37 @@ def session_environment(display: Display, force_renderer: str = "auto") -> dict[
     return env
 
 
+def host_environment(compositor: HostCompositor, force_renderer: str = "auto") -> dict[str, str]:
+    """Environment for a browser attaching to a compositor we did not start.
+
+    Nothing here configures a display: the output, its mode, the rotation and
+    the renderer all belong to whoever brought the compositor up. All this app
+    contributes is a client, so all it sets is where to find the socket.
+    """
+    env = {
+        **os.environ,
+        "WAYLAND_DISPLAY": compositor.wayland_display,
+        # Ours, not the host's — see `HostCompositor.wayland_display`. The
+        # browser needs somewhere writable and the host's runtime dir is not
+        # ours to write into.
+        "XDG_RUNTIME_DIR": str(RUNTIME_DIR),
+        "GDK_BACKEND": "wayland",
+        # WebKit's sandbox needs a user namespace the container may not grant.
+        "WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS": "1",
+    }
+
+    # Only an explicit override. Mesa inside the container often cannot reach
+    # the render node even where the host can, and says so loudly before
+    # falling back on its own — but the host compositor is doing the
+    # compositing either way, so guessing here would override a working GPU
+    # for the sake of a quieter log.
+    if force_renderer == "pixman":
+        env["LIBGL_ALWAYS_SOFTWARE"] = "1"
+        env["GALLIUM_DRIVER"] = "llvmpipe"
+
+    return env
+
+
 async def stop_conflicting_services(names: list[str]) -> list[str]:
     """Stop whatever else is drawing on the panel.
 
@@ -176,15 +213,25 @@ def reload_page(marker: str = BROWSER_MARKER, proc: Path = PROC) -> int:
 
 
 class Session:
-    """Owns the seatd and sway processes for the life of the app."""
+    """Owns whatever processes it takes to get the page on screen.
+
+    Two shapes, one interface: `start` brings up seatd and sway and lets the
+    compositor launch the browser, `start_hosted` runs the browser alone
+    against a compositor the host already had. The watchdog above only asks
+    whether the session is `running`, so it does not care which it got.
+    """
 
     def __init__(self) -> None:
         self.seatd: asyncio.subprocess.Process | None = None
         self.sway: asyncio.subprocess.Process | None = None
+        #: Only set in hosted mode. Otherwise the compositor owns the browser
+        #: and this app never has a handle to it — see `browser_pids`.
+        self.browser: asyncio.subprocess.Process | None = None
 
     @property
     def running(self) -> bool:
-        return self.sway is not None and self.sway.returncode is None
+        proc = self.sway or self.browser
+        return proc is not None and proc.returncode is None
 
     async def start(self, config: str, env: dict[str, str]) -> None:
         RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
@@ -211,8 +258,31 @@ class Session:
         )
         log.info("Started compositor (pid %s)", self.sway.pid)
 
+    async def start_hosted(self, browser_command: str, env: dict[str, str]) -> None:
+        """Run only the browser, on a compositor that is already up.
+
+        No seatd and no sway: there is nothing to become master of, and the
+        browser is a direct child rather than a grandchild. `reload_page` still
+        finds it the same way, by marker in /proc, so a new widget build
+        reloads in place here too.
+        """
+        RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
+        RUNTIME_DIR.chmod(0o700)
+
+        # Inherit stdio for the same reason the compositor does: a pipe nobody
+        # drains eventually blocks the process writing to it.
+        self.browser = await asyncio.create_subprocess_exec(
+            *shlex.split(browser_command),
+            env=env,
+        )
+        log.info(
+            "Started browser (pid %s) on the host compositor at %s",
+            self.browser.pid,
+            env.get("WAYLAND_DISPLAY", "?"),
+        )
+
     async def stop(self) -> None:
-        for proc, name in ((self.sway, "sway"), (self.seatd, "seatd")):
+        for proc, name in ((self.browser, "browser"), (self.sway, "sway"), (self.seatd, "seatd")):
             if proc is None or proc.returncode is not None:
                 continue
             try:
@@ -224,4 +294,4 @@ class Session:
                     proc.kill()
                 except ProcessLookupError:
                     pass
-        self.sway = self.seatd = None
+        self.sway = self.seatd = self.browser = None

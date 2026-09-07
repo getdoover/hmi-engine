@@ -15,8 +15,9 @@ docker buildx build --platform linux/arm64 -t hmi-engine .
 ## Structure
 
 ```
-src/hmi_engine/display.py      # detect connector, card, modes, GPU usability
+src/hmi_engine/display.py      # detect connector, card, modes, GPU, host compositor
 src/hmi_engine/session.py      # sway config generation + process supervision
+                               #   (own compositor, or just the browser on the host's)
 src/hmi_engine/browser.py      # fullscreen WebKitGTK window (standalone)
 src/hmi_engine/application.py  # Doover app: config, tags, UI, watchdog
 src/hmi_engine/source.py       # widget-app discovery + URL templating
@@ -82,6 +83,26 @@ src/hmi_engine/source.py       # widget-app discovery + URL templating
   gets a compositor that won't start.
 - **sway, not cage.** cage is smaller but cannot pin an output mode, and driving
   a 1080p panel at 720p is the single biggest saving when rendering in software.
+- **A host that already has a compositor gets used, not evicted.** On Raspberry
+  Pi OS, lightdm autologs into labwc, which holds DRM master; sway then fails
+  its output config, finds no workspace, and the watchdog restarts it every
+  five seconds forever (`find_host_compositor` exists because a device was found
+  on attempt 122). Where a live socket turns up under `/run/user/<uid>/`, the
+  browser attaches to it and no compositor is started. Nothing on the host is
+  stopped or disabled to make room — that was considered and rejected: a
+  display manager disabled from inside a container is permanent, survives the
+  app's removal, and would break every Pi running the `doover-kiosk` apt
+  package, which *depends* on labwc. `stop_conflicting_services` is as far as
+  this app goes into the host, and it only ever stops something transiently.
+- **In hosted mode `output`, `mode`, `rotation` and `renderer` mean nothing** —
+  the host's compositor owns all four. They are logged as ignored rather than
+  silently dropped, because a panel that is the wrong way up after someone set
+  `rotation` otherwise looks like the setting is broken.
+- **`WAYLAND_DISPLAY` is an absolute path, deliberately.** libwayland skips
+  `XDG_RUNTIME_DIR` entirely when the value starts with `/`, which is what lets
+  `/run/user` be mounted read-only while the browser still has a writable
+  runtime dir of its own. Setting `XDG_RUNTIME_DIR` to the host's directory
+  instead works too, but then the app is writing into someone else's session.
 - **cog's DRM backend segfaults on imx-drm** importing dmabuf, and Alpine 3.23
   dropped the cog package anyway. WebKitGTK under sway is the combination that
   works.

@@ -2,11 +2,15 @@
 
 import signal
 
+from pathlib import Path
+
 from hmi_engine import session as session_mod
-from hmi_engine.display import Display, Mode
+from hmi_engine.display import Display, HostCompositor, Mode
 from hmi_engine.session import (
+    RUNTIME_DIR,
     browser_pids,
     build_sway_config,
+    host_environment,
     reload_page,
     session_environment,
 )
@@ -166,3 +170,34 @@ class TestBrowserSignalling:
 
         monkeypatch.setattr(session_mod.os, "kill", gone)
         assert reload_page(proc=proc) == 0
+
+
+def host(uid=1000):
+    return HostCompositor(socket_path=Path(f"/run/user/{uid}/wayland-0"), uid=uid)
+
+
+class TestHostEnvironment:
+    def test_points_at_the_hosts_socket_by_absolute_path(self):
+        env = host_environment(host())
+        assert env["WAYLAND_DISPLAY"] == "/run/user/1000/wayland-0"
+
+    def test_keeps_our_own_runtime_dir(self):
+        # The host's runtime dir is mounted read-only and is not ours to write
+        # into; an absolute WAYLAND_DISPLAY means it does not have to be.
+        assert host_environment(host())["XDG_RUNTIME_DIR"] == str(RUNTIME_DIR)
+
+    def test_configures_no_compositor_of_its_own(self):
+        # Output, mode and renderer all belong to whoever started the
+        # compositor, so none of wlroots' knobs have any meaning here.
+        env = host_environment(host())
+        assert not [key for key in env if key.startswith("WLR_")]
+        assert "LIBSEAT_BACKEND" not in env
+
+    def test_leaves_the_gpu_alone_unless_told_otherwise(self):
+        assert "LIBGL_ALWAYS_SOFTWARE" not in host_environment(host(), "auto")
+        assert "LIBGL_ALWAYS_SOFTWARE" not in host_environment(host(), "gl")
+
+    def test_forces_software_rendering_when_asked(self):
+        env = host_environment(host(), "pixman")
+        assert env["LIBGL_ALWAYS_SOFTWARE"] == "1"
+        assert env["GALLIUM_DRIVER"] == "llvmpipe"

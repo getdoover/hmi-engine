@@ -17,6 +17,17 @@ hmi-engine (this app, supervising)
         └── WebKitGTK window   one URL, fullscreen, no chrome
 ```
 
+...unless the device already has a compositor of its own, in which case the
+middle row is somebody else's and this app supervises only the browser:
+
+```
+hmi-engine (this app, supervising)
+  └── WebKitGTK window         attached to the host's Wayland socket
+```
+
+Both are detected, never configured. See [Devices that already have a
+desktop](#devices-that-already-have-a-desktop).
+
 Everything about the display is detected at startup:
 
 | Decision | How it's made |
@@ -46,6 +57,39 @@ which always works.
 | `hide_cursor` | `true` | There is rarely a mouse |
 | `ignore_tls_errors` | `true` | Device-local pages use self-signed certificates |
 | `conflicting_services` | — | Init scripts to stop first (see below) |
+
+## Devices that already have a desktop
+
+A Raspberry Pi running Raspberry Pi OS is the opposite of the bare gateway
+above: lightdm has already autologged into a labwc session that holds DRM
+master on the connector. Two compositors cannot drive one output, and the
+incumbent wins — so starting sway there gets
+
+```
+[ERROR] [sway/config/output.c:897] Requested backend configuration failed
+[ERROR] [sway/tree/view.c:623] select_workspace:Expected to find a workspace
+Gdk-Message: Lost connection to Wayland compositor.
+```
+
+every five seconds, forever, with the panel never showing anything.
+
+So at startup the app looks for a compositor already running on the host — a
+live socket under `/run/user/<uid>/wayland-*` — and if it finds one, attaches
+the browser to it and starts no compositor of its own. The `compositor` tag
+reports which happened, `own` or `host`.
+
+Nothing on the host is stopped, disabled or reconfigured to make this work. The
+runtime directory is mounted **read-only**, and `WAYLAND_DISPLAY` is set to the
+socket's absolute path so `XDG_RUNTIME_DIR` can stay pointed at the container's
+own writable directory. Removing the app leaves the device exactly as it was.
+
+A socket that exists but refuses a connection is a crashed session's leftover
+and is skipped. Where several sessions have one, a logged-in user's is
+preferred over a system account's, which is usually a greeter.
+
+In this mode the display belongs to the host, so `output`, `mode`, `rotation`
+and `renderer` do nothing — the app logs which of them you had set rather than
+appearing to ignore you. Set them on the host's own session instead.
 
 ## Putting a widget app on the panel
 
@@ -150,8 +194,13 @@ privileged: true                        # DRM master
 volumes:
   - /dev/dri:/dev/dri:rw                # display and render nodes
   - /run/udev:/run/udev:ro              # wlroots output discovery
+  - /run/user:/run/user:ro              # find the host's compositor, if it has one
   - /etc/init.d:/host/etc/init.d:ro     # for conflicting_services
 ```
+
+An install created before this mount existed will keep fighting the host's
+compositor until it is redeployed, because the app cannot see a socket that was
+never mounted in. Redeploying picks up the current compose.
 
 ## Development
 

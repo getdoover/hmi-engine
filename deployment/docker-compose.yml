@@ -19,6 +19,11 @@ services:
       - /dev/dri:/dev/dri:rw
       # wlroots discovers and hotplugs outputs through udev.
       - /run/udev:/run/udev:ro
+      # Every user session's runtime dir, so a compositor the host is already
+      # running can be found and attached to instead of fought with. Read-only:
+      # the browser only connects to the socket, and XDG_RUNTIME_DIR stays
+      # pointed at this container's own writable directory.
+      - /run/user:/run/user:ro
       # Read-only view of the host's init scripts, so `conflicting_services`
       # can stop a vendor splash that would otherwise repaint over the page.
       - /etc/init.d:/host/etc/init.d:ro

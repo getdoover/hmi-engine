@@ -8,6 +8,11 @@ class HMIEngineTags(Tags):
     display_found = Tag("boolean", default=False)
     showing = Tag("boolean", default=False)
 
+    #: "own" when this app brought up sway, "host" when it attached to a
+    #: compositor the device was already running. Which one is the first thing
+    #: to know about a panel that is showing the wrong thing.
+    compositor = Tag("string", default="")
+
     output = Tag("string", default="")
     mode = Tag("string", default="")
     renderer = Tag("string", default="")

@@ -292,6 +292,7 @@
                     }
                 }
             }
-        }
+        },
+        "icon_url": "https://cdn.jsdelivr.net/gh/getdoover/app-icons@c64ead72f460544e629049f992fb36f4471a04b5/icons/hmi_engine.png"
     }
 }

@@ -109,6 +109,14 @@ TERMINATION_MESSAGES = {
 }
 
 
+def _megabytes(text: str) -> float | None:
+    try:
+        mb = float(text)
+    except ValueError:
+        return None
+    return round(mb, 1) if math.isfinite(mb) and mb >= 0 else None
+
+
 class BrowserHealth:
     """Turns status lines into tag values.
 
@@ -142,11 +150,14 @@ class BrowserHealth:
                 ),
             }
         if status.kind == "memory":
-            try:
-                mb = float(status.detail)
-            except ValueError:
+            # `memory <rss> [<private>]`: an older browser sends only RSS.
+            values = [_megabytes(part) for part in status.detail.split()[:2]]
+            if not values or values[0] is None:
                 return {}
-            return {"page_memory_mb": round(mb, 1)} if math.isfinite(mb) and mb >= 0 else {}
+            updates = {"page_memory_mb": values[0]}
+            if len(values) > 1 and values[1] is not None:
+                updates["page_private_mb"] = values[1]
+            return updates
         if status.kind == "loaded" and self._crash_on_last_error:
             self._crash_on_last_error = False
             return {"last_error": ""}

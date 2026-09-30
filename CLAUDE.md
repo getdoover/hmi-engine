@@ -126,8 +126,11 @@ src/hmi_engine/source.py       # widget-app discovery + URL templating
   after it**, and building a `WebView` without one creates the default session —
   so it must run before the view is constructed, not after `get_network_session()`.
 - **WebKit's `kill_threshold` is a fraction of `memory_limit`, may exceed 1, and
-  0 means never kill** (the default); ours is 1.25, so 512 MiB kills at 640 and
+  0 means never kill** (the default); ours is 1.25, so 320 MB kills at 400 and
   the browser's `web-process-terminated` handler reloads the page.
+- **The memory limit is judged against private footprint (~Private_Dirty), not
+  RSS** — RSS carries ~100 MB more of shared libs. SIA HMI: ~110 MB private,
+  ~255 RSS. Bench-proven: limit 160 never fired at 247 RSS; 64 fired at once.
 - **Vendor splashes fight for the framebuffer.** Symptom is the page showing then
   being replaced a second later. See `conflicting_services` in the README.
 

@@ -104,13 +104,15 @@ class HMIEngineConfig(config.Schema):
 
     memory_limit_mb = config.Number(
         "Memory Limit (MB)",
-        default=512.0,
+        default=320.0,
         minimum=0.0,
         description=(
-            "Memory the page may use, in MB. Past a fraction of it the browser "
+            "Private memory the page may use, in MB. Not RSS, which also "
+            "counts ~100 MB of shared libraries. Past half of it the browser "
             "frees caches; at 1.25x it restarts the page rather than let the "
-            "device run out and swap. The SIA HMI uses about 200. 0 leaves "
-            "the browser's own default, which never restarts it."
+            "device run out and swap. The SIA HMI uses about 110 MB private "
+            "(250 RSS). 0 leaves the browser's own default, which never "
+            "restarts it."
         ),
     )
 

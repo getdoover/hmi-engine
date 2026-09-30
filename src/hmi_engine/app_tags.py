@@ -34,6 +34,10 @@ class HMIEngineTags(Tags):
     #: "exceeded-memory-limit at 2026-10-01 03:12:44 UTC". Kept after the page
     #: recovers, unlike `last_error`.
     last_page_crash = Tag("string", default="")
-    #: Resident memory of the page's web process in MiB, updated once a minute.
-    #: A steady climb over days is a leak on its way to the memory limit.
+    #: Resident memory (RSS) of the page's web process in MiB, updated once a
+    #: minute — the number `top` shows.
     page_memory_mb = Tag("number", default=0.0)
+    #: The same process's private memory in MiB — the footprint
+    #: `memory_limit_mb` is judged against, not RSS. A steady climb over days
+    #: is a leak on its way to the limit.
+    page_private_mb = Tag("number", default=0.0)

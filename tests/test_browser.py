@@ -181,9 +181,9 @@ class TestMemoryPressure:
         assert webkit == []
 
     def test_sets_the_limit_and_thresholds(self, browser, webkit):
-        browser.memory_pressure_settings(512)
+        browser.memory_pressure_settings(320)
         calls = {name: args for name, args, _ in webkit}
-        assert calls["settings.set_memory_limit"] == (512,)
+        assert calls["settings.set_memory_limit"] == (320,)
         assert calls["settings.set_conservative_threshold"] == (0.5,)
         assert calls["settings.set_strict_threshold"] == (0.75,)
         assert calls["settings.set_kill_threshold"] == (1.25,)
@@ -192,7 +192,7 @@ class TestMemoryPressure:
     def test_thresholds_are_set_in_an_order_webkit_accepts(self, browser, webkit):
         # conservative < strict < kill must hold after every call, starting from
         # WebKit's defaults of 0.33 / 0.5 / 0 (0 = never kill).
-        browser.memory_pressure_settings(512)
+        browser.memory_pressure_settings(320)
         current = {"conservative": 0.33, "strict": 0.5, "kill": 0.0}
         for name, args, _ in webkit:
             for key in current:
@@ -201,13 +201,17 @@ class TestMemoryPressure:
             assert 0 < current["conservative"] < current["strict"] < 1
             assert current["kill"] == 0 or current["kill"] > current["strict"]
 
-    def test_the_kill_threshold_lands_under_the_devices_free_memory(self, browser):
-        # A ~210 MiB page plus ~500 MB free: the device is out of RAM near 700.
-        assert 512 * browser.KILL_THRESHOLD < 700
-        assert 512 * browser.CONSERVATIVE_THRESHOLD > 220  # idle at steady state
+    def test_the_default_kills_before_the_device_runs_out(self, browser):
+        # All private footprint, as WebKit judges it. Bench, SIA HMI on a
+        # Doovit: ~105-115 MB private at steady state; RSS is private plus
+        # ~100 MB of shared libraries; ~690 MB available before swap.
+        limit = 320
+        assert limit * browser.CONSERVATIVE_THRESHOLD > 115  # idle at steady state
+        assert limit * browser.KILL_THRESHOLD == 400
+        assert limit * browser.KILL_THRESHOLD + 100 < 690  # as RSS, inside the device
 
     def test_network_session_is_configured_before_the_web_context(self, browser, webkit):
-        context = browser.limited_web_context(512)
+        context = browser.limited_web_context(320)
         order = [name for name, _, _ in webkit]
         assert order.index("NetworkSession.set_memory_pressure_settings") < order.index("WebContext")
         # And the web process gets the same settings, as a construct property.
@@ -262,11 +266,27 @@ class TestReportStatus:
         assert capsys.readouterr().out == "HMI-STATUS loaded\n"
 
 
-def fake_proc(tmp_path, processes):
-    """processes: pid -> (name, ppid, rss_kb or None)."""
+def fake_proc(tmp_path, processes, rollups=None):
+    """processes: pid -> (name, ppid, rss_kb or None).
+
+    rollups: pid -> (private_clean_kb, private_dirty_kb), written as a real
+    smaps_rollup would be. A pid without one has no readable smaps_rollup.
+    """
+    for pid, (clean, dirty) in (rollups or {}).items():
+        entry = tmp_path / str(pid)
+        entry.mkdir(exist_ok=True)
+        (entry / "smaps_rollup").write_text(
+            "00400000-ffffe000 ---p 00000000 00:00 0    [rollup]\n"
+            "Rss:              268288 kB\n"
+            "Shared_Clean:      99328 kB\n"
+            "Shared_Dirty:       4096 kB\n"
+            f"Private_Clean:     {clean} kB\n"
+            f"Private_Dirty:     {dirty} kB\n"
+            "Swap:                  0 kB\n"
+        )
     for pid, (name, ppid, rss_kb) in processes.items():
         entry = tmp_path / str(pid)
-        entry.mkdir()
+        entry.mkdir(exist_ok=True)
         (entry / "stat").write_text(f"{pid} ({name}) S {ppid} {pid} {pid} 0 -1 4194560 0")
         status = f"Name:\t{name}\nPPid:\t{ppid}\n"
         if rss_kb is not None:
@@ -289,25 +309,26 @@ class TestWebkitMemory:
             },
         )
         web, network = browser.webkit_memory(50, proc)
-        assert web == pytest.approx(212.5)
-        assert network == pytest.approx(40.0)
+        assert web.rss == pytest.approx(212.5)
+        assert network.rss == pytest.approx(40.0)
 
     def test_follows_grandchildren(self, browser, tmp_path):
         proc = fake_proc(
             tmp_path,
             {50: ("python3", 1, 1), 51: ("bwrap", 50, 1), 52: ("WebKitWebProces", 51, 102400)},
         )
-        assert browser.webkit_memory(50, proc)[0] == pytest.approx(100.0)
+        assert browser.webkit_memory(50, proc)[0].rss == pytest.approx(100.0)
 
     def test_none_between_a_crash_and_its_reload(self, browser, tmp_path):
         proc = fake_proc(tmp_path, {50: ("python3", 1, 1), 52: ("WebKitNetworkPr", 50, 1024)})
-        assert browser.webkit_memory(50, proc) == (None, pytest.approx(1.0))
+        web, network = browser.webkit_memory(50, proc)
+        assert web is None and network.rss == pytest.approx(1.0)
 
     def test_a_name_with_spaces_and_parens_does_not_confuse_it(self, browser, tmp_path):
         proc = fake_proc(
             tmp_path, {50: ("python3", 1, 1), 70: ("odd) (name", 50, 1), 71: ("WebKitWebProces", 70, 2048)}
         )
-        assert browser.webkit_memory(50, proc)[0] == pytest.approx(2.0)
+        assert browser.webkit_memory(50, proc)[0].rss == pytest.approx(2.0)
 
     def test_tolerates_processes_that_vanish_or_lack_rss(self, browser, tmp_path):
         proc = fake_proc(
@@ -316,3 +337,45 @@ class TestWebkitMemory:
         )
         (proc / "52" / "status").unlink()
         assert browser.webkit_memory(50, proc) == (None, None)
+
+    def test_reads_the_private_footprint_webkit_judges(self, browser, tmp_path):
+        # The bench numbers: Rss 262 = Shared 101 + Private_Clean 45 + Private_Dirty 114.
+        proc = fake_proc(
+            tmp_path,
+            {50: ("python3", 1, 1), 51: ("WebKitWebProces", 50, 268288)},
+            rollups={51: (46080, 116736)},
+        )
+        web = browser.webkit_memory(50, proc)[0]
+        assert (web.rss, web.private, web.dirty) == (262.0, 159.0, 114.0)
+        assert web.describe() == "262 MiB rss, 159 MiB private (114 dirty)"
+        assert browser.memory_status(web) == "memory 262.0 159.0"
+
+    def test_an_unreadable_smaps_rollup_falls_back_to_rss(self, browser, tmp_path):
+        proc = fake_proc(tmp_path, {50: ("python3", 1, 1), 51: ("WebKitWebProces", 50, 268288)})
+        web = browser.webkit_memory(50, proc)[0]
+        assert (web.rss, web.private, web.dirty) == (262.0, None, None)
+        assert web.describe() == "262 MiB rss"
+        assert browser.memory_status(web) == "memory 262.0"
+
+    def test_a_rollup_missing_a_field_is_treated_as_unreadable(self, browser, tmp_path):
+        proc = fake_proc(tmp_path, {50: ("python3", 1, 1), 51: ("WebKitWebProces", 50, 1024)})
+        (proc / "51" / "smaps_rollup").write_text("Private_Dirty:   2048 kB\n")
+        assert browser.webkit_memory(50, proc)[0].private is None
+
+    def test_several_web_processes_add_up(self, browser, tmp_path):
+        proc = fake_proc(
+            tmp_path,
+            {50: ("python3", 1, 1), 51: ("WebKitWebProces", 50, 1024), 52: ("WebKitWebProces", 50, 2048)},
+            rollups={51: (0, 512), 52: (1024, 1024)},
+        )
+        web = browser.webkit_memory(50, proc)[0]
+        assert (web.rss, web.private, web.dirty) == (3.0, 2.5, 1.5)
+
+    def test_one_unreadable_rollup_makes_the_total_unknown_not_low(self, browser, tmp_path):
+        proc = fake_proc(
+            tmp_path,
+            {50: ("python3", 1, 1), 51: ("WebKitWebProces", 50, 1024), 52: ("WebKitWebProces", 50, 2048)},
+            rollups={51: (0, 512)},
+        )
+        web = browser.webkit_memory(50, proc)[0]
+        assert web.rss == 3.0 and web.private is None

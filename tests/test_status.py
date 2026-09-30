@@ -133,7 +133,16 @@ class TestBrowserHealth:
     def test_memory_goes_on_its_tag_as_float_mb(self):
         assert BrowserHealth().update(Status("memory", "212.46"), NOW) == {"page_memory_mb": 212.5}
 
-    @pytest.mark.parametrize("detail", ["", "lots", "nan", "-3"])
+    def test_rss_and_private_go_on_their_own_tags(self):
+        assert BrowserHealth().update(Status("memory", "262.0 159.04"), NOW) == {
+            "page_memory_mb": 262.0,
+            "page_private_mb": 159.0,
+        }
+
+    def test_a_bad_private_reading_keeps_the_rss(self):
+        assert BrowserHealth().update(Status("memory", "262.0 lots"), NOW) == {"page_memory_mb": 262.0}
+
+    @pytest.mark.parametrize("detail", ["", "lots", "nan", "-3", "lots 159.0"])
     def test_a_bad_memory_reading_is_ignored(self, detail):
         assert BrowserHealth().update(Status("memory", detail), NOW) == {}
 
@@ -151,7 +160,7 @@ class FakeTag:
 
 class FakeTags:
     def __init__(self):
-        for name in ("last_error", "page_crashes", "last_page_crash", "page_memory_mb", "showing"):
+        for name in ("last_error", "page_crashes", "last_page_crash", "page_memory_mb", "page_private_mb", "showing"):
             setattr(self, name, FakeTag())
 
 
@@ -173,13 +182,13 @@ def app_with(config=None, status_path=None):
 class TestApplicationWiring:
     def test_memory_limit_key_and_default(self):
         schema = HMIEngineConfig.to_schema()["properties"]
-        assert schema["memory_limit_mb"]["default"] == 512
+        assert schema["memory_limit_mb"]["default"] == 320
         assert schema["memory_limit_mb"]["minimum"] == 0
-        assert configured().memory_limit_mb.value == 512
+        assert configured().memory_limit_mb.value == 320
 
     def test_passes_the_memory_limit_to_the_browser(self):
         argv = shlex.split(app_with()._browser_command("https://x/"))
-        assert argv[argv.index("--memory-limit-mb") + 1] == "512"
+        assert argv[argv.index("--memory-limit-mb") + 1] == "320"
 
     def test_passes_a_configured_limit_as_whole_mb(self):
         argv = shlex.split(app_with(configured(memory_limit_mb=768.6))._browser_command("https://x/"))
@@ -199,7 +208,7 @@ class TestApplicationWiring:
         app = app_with(status_path=path)
         path.write_text(
             "HMI-STATUS loaded\n"
-            "HMI-STATUS memory 598.2\n"
+            "HMI-STATUS memory 598.2 402.7\n"
             "HMI-STATUS terminated exceeded-memory-limit\n"
         )
         asyncio.run(app._read_browser_status())
@@ -207,18 +216,20 @@ class TestApplicationWiring:
         assert app.tags.last_page_crash.value.startswith("exceeded-memory-limit at ")
         assert "memory limit" in app.tags.last_error.value
         assert app.tags.page_memory_mb.value == 598.2
+        assert app.tags.page_private_mb.value == 402.7
 
         with path.open("a") as fh:
-            fh.write("HMI-STATUS loaded\nHMI-STATUS memory 214.0\n")
+            fh.write("HMI-STATUS loaded\nHMI-STATUS memory 214.0 110.5\n")
         asyncio.run(app._read_browser_status())
         assert app.tags.last_error.value == ""
         assert app.tags.page_crashes.value == 1
         assert app.tags.page_memory_mb.value == 214.0
+        assert app.tags.page_private_mb.value == 110.5
 
     def test_every_tag_it_sets_is_declared(self):
         declared = {name for name in vars(HMIEngineTags) if not name.startswith("_")}
         health = BrowserHealth()
         produced = set()
-        for status in (Status("terminated", "crashed"), Status("memory", "1"), Status("loaded")):
+        for status in (Status("terminated", "crashed"), Status("memory", "1 2"), Status("loaded")):
             produced |= set(health.update(status, NOW))
         assert produced <= declared

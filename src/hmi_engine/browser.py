@@ -9,6 +9,12 @@ WebKit renders in a separate WebKitWebProcess; if that crashes or is killed,
 the view goes blank and stays blank unless something loads the page again. On
 a panel that runs for weeks on a 1.8 GB Doovit, that is the difference between
 a hiccup and a dark wall until someone walks up to it.
+
+The memory limit (`--memory-limit-mb`) applies to the web process's *private*
+footprint — about Private_Dirty in /proc/<pid>/smaps_rollup — not to its RSS.
+On a Doovit RSS carries ~100 MB of shared libraries on top of that. Measured
+with the SIA HMI: ~105-115 MB private, ~250-260 MB RSS. Pick a limit against
+the private number; the once-a-minute memory log shows both.
 """
 
 from __future__ import annotations
@@ -21,6 +27,7 @@ import sys
 import time
 from collections import deque
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 
 import gi
@@ -44,33 +51,39 @@ MEMORY_REPORT_SECONDS = 60
 
 # --- Memory pressure -------------------------------------------------------
 #
-# Numbers from the SIA HMI on a Doovit: the web process sits at 200-220 MiB
-# RSS, the device has 1.8 GB and about 500 MB of it free with the page up. So
-# the page can grow to roughly 700 MiB before the device is out of RAM and into
-# swap — and deep in swap, the kernel's OOM killer picks its victim at random.
+# WHICH NUMBER THE LIMIT APPLIES TO: the web process's *private* footprint —
+# roughly its Private_Dirty in /proc/<pid>/smaps_rollup — not RSS. RSS also
+# counts ~100 MB of shared libraries on a Doovit, which WebKit ignores. Measured
+# on the bench with the SIA HMI: ~105-115 MB private, ~250-260 MB RSS
+# (Rss 262 = Shared_Clean 97 + Shared_Dirty 4 + Private_Clean 45 +
+# Private_Dirty 114). A limit of 160 (kill at 200) never fired at 247 MB RSS; a
+# limit of 64 (kill at 80) fired at once. So: private ≈ RSS minus ~100-150 MB.
+#
+# The device has 1.8 GB and about 690 MB available to the page. Past that it is
+# in swap, and deep in swap the kernel's OOM killer picks its victim at random.
 # These settings make WebKit shed memory as the page grows and, if that isn't
 # enough, restart the page itself before the kernel has to choose.
 #
-# All thresholds are fractions of the limit (`--memory-limit-mb`, 512 by
-# default). WebKit measures its own footprint, which runs somewhat under RSS.
+# All thresholds are fractions of the limit (`--memory-limit-mb`, 320 by
+# default), and all the MB below are private footprint.
 
-#: 0.5 x 512 = 256 MiB: start releasing non-critical memory (caches). WebKit's
+#: 0.5 x 320 = 160 MB: start releasing non-critical memory (caches). WebKit's
 #: default is 0.33, which suits its default limit (the machine's RAM, up to
-#: 3 GB); against 512 MiB it is 169 MiB, below the page's steady state, and the
+#: 3 GB); against 320 it is 106 MB, right at the page's steady state, and the
 #: handler would be trimming caches on every poll forever — the performance
 #: trap WebKit's docs warn about.
 CONSERVATIVE_THRESHOLD = 0.5
 
-#: 0.75 x 512 = 384 MiB: release critical memory too. Nearly twice the page's
+#: 0.75 x 320 = 240 MB: release critical memory too. Over twice the page's
 #: normal size, so reaching it means the page is leaking, not just busy.
 STRICT_THRESHOLD = 0.75
 
-#: 1.25 x 512 = 640 MiB: WebKit kills the web process, `web-process-terminated`
-#: fires with EXCEEDED_MEMORY_LIMIT, and the page is reloaded fresh. Chosen to
-#: land under the ~700 MiB at which the device runs out of RAM (a 210 MiB page
-#: plus ~500 MB free), leaving room for everything else on the box. The kill
-#: threshold may exceed 1; 0 would mean "never kill", which is WebKit's default
-#: and the reason a leak used to end in swap.
+#: 1.25 x 320 = 400 MB: WebKit kills the web process, `web-process-terminated`
+#: fires with EXCEEDED_MEMORY_LIMIT, and the page is reloaded fresh. 400 MB
+#: private is roughly 500 MB RSS, inside the ~690 MB the device can give before
+#: swapping, with room left for everything else on the box. The kill threshold
+#: may exceed 1; 0 would mean "never kill", which is WebKit's default and the
+#: reason a leak used to end in swap.
 KILL_THRESHOLD = 1.25
 
 #: WebKit's default, stated so it isn't a mystery: a poll every 30 s is plenty
@@ -257,18 +270,64 @@ def _descendants(root: int, proc: Path) -> dict[int, str]:
     return found
 
 
-def _rss_mb(pid: int, proc: Path) -> float | None:
+@dataclass(frozen=True)
+class Usage:
+    """One process kind's memory, in MiB.
+
+    `rss` is what `top` shows. `private` (Private_Clean + Private_Dirty) is the
+    part that is this process's alone, and `dirty` (Private_Dirty) is close to
+    what WebKit's memory limit is judged against — RSS minus ~100 MB of shared
+    libraries, give or take clean pages. None where smaps_rollup can't be read.
+    """
+
+    rss: float
+    private: float | None = None
+    dirty: float | None = None
+
+    def __add__(self, other: Usage) -> Usage:
+        def both(a, b):
+            return None if a is None or b is None else a + b
+
+        return Usage(
+            self.rss + other.rss,
+            both(self.private, other.private),
+            both(self.dirty, other.dirty),
+        )
+
+    def describe(self) -> str:
+        text = f"{self.rss:.0f} MiB rss"
+        if self.private is not None and self.dirty is not None:
+            text += f", {self.private:.0f} MiB private ({self.dirty:.0f} dirty)"
+        return text
+
+
+def _kb_fields(path: Path, wanted: tuple[str, ...]) -> dict[str, float]:
+    """`Name:   1234 kB` lines out of a /proc file, as MiB, for the names asked."""
+    found: dict[str, float] = {}
     try:
-        for line in (proc / str(pid) / "status").read_text().splitlines():
-            if line.startswith("VmRSS:"):
-                return int(line.split()[1]) / 1024  # kB -> MiB
+        for line in path.read_text().splitlines():
+            name, _, rest = line.partition(":")
+            if name in wanted:
+                found[name] = int(rest.split()[0]) / 1024  # kB -> MiB
     except (OSError, ValueError, IndexError):
         pass
-    return None
+    return found
 
 
-def webkit_memory(root: int, proc: Path = PROC) -> tuple[float | None, float | None]:
-    """RSS in MiB of the web and network processes under `root`.
+def _usage(pid: int, proc: Path) -> Usage | None:
+    rss = _kb_fields(proc / str(pid) / "status", ("VmRSS",)).get("VmRSS")
+    if rss is None:
+        return None
+    # smaps_rollup needs the same uid or root; the browser runs as root in the
+    # container, but a process without it just reports RSS.
+    rollup = _kb_fields(proc / str(pid) / "smaps_rollup", ("Private_Clean", "Private_Dirty"))
+    if len(rollup) < 2:
+        return Usage(rss)
+    return Usage(rss, rollup["Private_Clean"] + rollup["Private_Dirty"], rollup["Private_Dirty"])
+
+
+def webkit_memory(root: int, proc: Path = PROC) -> tuple[Usage | None, Usage | None]:
+    """Memory of the web and network processes under `root`.
 
     None for a kind with no live process — between a crash and its reload,
     say. Walks descendants rather than children so a sandbox launcher in
@@ -277,14 +336,21 @@ def webkit_memory(root: int, proc: Path = PROC) -> tuple[float | None, float | N
     """
     web = network = None
     for pid, name in _descendants(root, proc).items():
-        rss = _rss_mb(pid, proc)
-        if rss is None:
+        usage = _usage(pid, proc)
+        if usage is None:
             continue
         if name.startswith(WEB_PROCESS):
-            web = (web or 0.0) + rss
+            web = usage if web is None else web + usage
         elif name.startswith(NETWORK_PROCESS):
-            network = (network or 0.0) + rss
+            network = usage if network is None else network + usage
     return web, network
+
+
+def memory_status(web: Usage) -> str:
+    """`memory <rss> [<private>]` — the second number only when it was readable."""
+    if web.private is None:
+        return f"memory {web.rss:.1f}"
+    return f"memory {web.rss:.1f} {web.private:.1f}"
 
 
 # --- The window ------------------------------------------------------------
@@ -327,7 +393,8 @@ class KioskWindow(Gtk.ApplicationWindow):
         context = limited_web_context(memory_limit_mb)
         if context is not None:
             log.info(
-                "Memory limit %s MiB: shedding from %.0f, killed and reloaded at %.0f",
+                "Memory limit %s MB of private footprint (not RSS): shedding from "
+                "%.0f, killed and reloaded at %.0f",
                 memory_limit_mb,
                 memory_limit_mb * CONSERVATIVE_THRESHOLD,
                 memory_limit_mb * KILL_THRESHOLD,
@@ -432,11 +499,11 @@ class KioskWindow(Gtk.ApplicationWindow):
                 log.info("Memory: no web process running")
             else:
                 log.info(
-                    "Memory: web process %.0f MiB, network process %s",
-                    web,
-                    f"{network:.0f} MiB" if network is not None else "not running",
+                    "Memory: web process %s; network process %s",
+                    web.describe(),
+                    network.describe() if network is not None else "not running",
                 )
-                self._status(f"memory {web:.1f}")
+                self._status(memory_status(web))
         except Exception:  # noqa: BLE001 — observation must never take the page down
             log.debug("Could not read WebKit's memory", exc_info=True)
         return GLib.SOURCE_CONTINUE
@@ -469,7 +536,8 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=0,
         help="Memory-pressure limit for WebKit's web and network processes, in "
-        "MiB; 0 leaves WebKit's defaults (no limit, never killed).",
+        "MB of private footprint (not RSS); 0 leaves WebKit's defaults (no "
+        "limit, never killed).",
     )
     parser.add_argument(
         "--status-file",

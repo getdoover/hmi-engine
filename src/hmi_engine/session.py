@@ -28,6 +28,8 @@ log = logging.getLogger(__name__)
 
 RUNTIME_DIR = Path("/tmp/hmi-runtime")
 CONFIG_PATH = RUNTIME_DIR / "sway.conf"
+#: Where the browser appends its `HMI-STATUS` lines for this app — see `status`.
+STATUS_PATH = RUNTIME_DIR / "browser-status"
 
 #: Identifies the browser in /proc. The compositor starts it, so there is no
 #: handle to keep — but it shares this container's PID namespace.

@@ -56,6 +56,7 @@ which always works.
 | `reload_interval_min` | `0` | Periodic reload; guards against a page that wedges after weeks |
 | `reload_at` | — | Daily reload at this time, `HH:MM` 24-hour, e.g. `00:00`. Blank for none — see below |
 | `timezone` | `UTC` | The zone `reload_at` is in, as an IANA name such as `Australia/Brisbane` |
+| `memory_limit_mb` | `320` | **Private** memory the page may use, in MB — not RSS. WebKit sheds memory as it nears it and restarts the page at 1.25×; `0` leaves WebKit's default, which never does — see below |
 | `hide_cursor` | `true` | There is rarely a mouse |
 | `ignore_tls_errors` | `true` | Device-local pages use self-signed certificates |
 | `conflicting_services` | — | Init scripts to stop first (see below) |
@@ -186,7 +187,8 @@ nothing else, so new JavaScript landing *is* the trigger: a second later the
 browser is sent `SIGHUP` and reloads, bypassing its cache so the new build can't
 be served from the old one. The compositor stays up, so the panel never blanks.
 
-Nothing else causes a reload except the two clocks you can set. Redeploying an
+Nothing else causes a reload except the two clocks you can set and the page's
+own process dying ([below](#when-the-page-crashes)). Redeploying an
 unrelated app on the same device leaves the page alone, and the engine's own config needs no watching — editing an
 install's config redeploys it, and redeploying this app restarts the container
 with the new config already in hand.
@@ -224,6 +226,74 @@ fired at whatever hour NTP happened to set, and the next night's stands.
 On the night clocks go forward, a time that doesn't exist (`02:30` in Sydney)
 fires an hour later by the new clock; on the night they go back, a time that
 happens twice fires once.
+
+## When the page crashes
+
+WebKit draws the page in a separate process, `WebKitWebProcess`. If that
+process crashes, or is killed for using too much memory, the browser window
+survives but the page inside it is gone — and it used to stay gone, a blank
+panel until someone restarted the app.
+
+Now the browser loads the page again on its own, and the compositor stays up
+throughout. On the bench, a `kill -9` of the web process on a Doovit running
+the SIA HMI went: blank for about a second, the page loaded again three seconds
+later — and then the widget's own "Connecting to controller…" screen for about
+ten seconds before live data came back. Those ten seconds are the widget
+reconnecting to the device, not the browser; a different widget will take as
+long as its own reconnect does.
+
+A page that dies straight after loading would otherwise be reloaded every
+second, pinning the CPU of a device that has nothing to show for it. So after
+three terminations inside five minutes the wait grows — 5, 10, 20, 40 seconds,
+then a minute between attempts — and it goes back to a second once the page has
+stayed up for ten minutes.
+
+### The memory limit
+
+A page on a wall for weeks can leak, and with nothing to stop it WebKit will
+take whatever the device has. On a Doovit — 1.8 GB, about 690 MB of it
+available to the page — that ends deep in swap, with the kernel's OOM killer
+choosing a victim at random: the page, the device agent, or whatever else it
+lands on.
+
+`memory_limit_mb` hands the problem to WebKit instead. **The limit is on the
+web process's private footprint, not its RSS.** WebKit judges roughly the
+process's Private_Dirty memory; RSS, the number `top` shows, also counts about
+100 MB of shared libraries that WebKit ignores. Measured on the bench with the
+SIA HMI:
+
+| | Private | RSS |
+|---|---|---|
+| SIA HMI, steady state | ~105–115 MB | ~250–260 MB |
+
+So pick a limit against the private number, with headroom for the page to
+breathe. Against the default of 320 MB, WebKit frees caches from 160 MB, frees
+harder from 240 MB, and at 400 MB (1.25×) kills its own web process, which the
+browser then reloads like any other crash. 400 MB private is roughly 500 MB
+RSS — inside what the device can give before it swaps, so the page is restarted
+cleanly rather than the device grinding into swap. (The first default, 512,
+would have killed at 640 MB private, about 750 MB RSS: past the point of no
+return on this device.) The same limit applies to WebKit's network process.
+Set `0` for WebKit's default, which has no limit and never kills.
+
+### What it reports
+
+| Tag | Meaning |
+|---|---|
+| `page_crashes` | Times the web process has died since the app started. One is an accident; a climbing count is a page that keeps falling over |
+| `last_page_crash` | The latest: why and when, e.g. `exceeded-memory-limit at 2026-10-01 03:12:44 UTC`. Stays after the page recovers |
+| `last_error` | Says the page crashed while it is down, and clears when it loads again |
+| `page_memory_mb` | The web process's RSS in MiB, once a minute — what `top` shows |
+| `page_private_mb` | Its private memory in MiB (Private_Clean + Private_Dirty), once a minute — the footprint the limit is judged against. A steady climb over days is a leak heading for the limit |
+
+The browser logs the same things — `The page's web process terminated
+(exceeded-memory-limit); reloading in 1 s`, and a line a minute such as
+`Memory: web process 262 MiB rss, 159 MiB private (114 dirty); network process
+…` — and prints `HMI-STATUS terminated <reason>` and
+`HMI-STATUS memory <rss> <private>` lines.
+Those also go into a small file under `/tmp/hmi-runtime/`, which is how the app
+reads them: the browser's stdout is deliberately not piped back to the app,
+because a pipe that fills blocks the compositor.
 
 ## Vendor splash screens
 
@@ -288,6 +358,7 @@ window it launches gets a standalone script and the interpreter that can load
 | `src/hmi_engine/display.py` | Detection — connector, card, modes, whether Mesa can help |
 | `src/hmi_engine/session.py` | Compositor config generation and process supervision |
 | `src/hmi_engine/schedule.py` | The daily reload: next occurrence in a timezone, and a clock-step-tolerant loop |
+| `src/hmi_engine/status.py` | Reading the browser's `HMI-STATUS` lines and turning them into tags |
 | `src/hmi_engine/browser.py` | The fullscreen WebKit window (standalone, distro Python) |
 | `src/hmi_engine/application.py` | Doover app: config, tags, UI, watchdog |
 | `tests/` | Detection and config-generation, which have to cope with unfamiliar hardware |

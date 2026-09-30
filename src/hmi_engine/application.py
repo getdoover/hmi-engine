@@ -2,6 +2,7 @@ import asyncio
 import logging
 import os
 import shlex
+from datetime import UTC, datetime
 
 from pydoover import ui
 from pydoover.docker import Application
@@ -13,6 +14,7 @@ from .app_ui import HMIEngineUI
 from . import display as display_mod
 from .schedule import DailyReload
 from .session import (
+    STATUS_PATH,
     Session,
     build_sway_config,
     host_environment,
@@ -30,6 +32,7 @@ from .source import (
     pick_named,
     resolve_url,
 )
+from .status import BrowserHealth, StatusFile
 
 log = logging.getLogger(__name__)
 
@@ -70,12 +73,18 @@ class HMIEngineApplication(Application):
         self._compositor = "own"
         self._daily_reload = DailyReload(self._reload_schedule, self._scheduled_reload)
         self._schedule_task: asyncio.Task | None = None
+        #: What the browser says about itself — crashes, memory. See `status`.
+        self._browser_status = StatusFile(STATUS_PATH)
+        self._health = BrowserHealth()
         self._ensure_reload_schedule()
         await self.start_session()
 
     async def start_session(self):
         """Work out what to show, detect the display, then bring up the session."""
         await self.tags.showing.set(False)
+        # A new browser starts a new status file; the old one's lines are done.
+        self._browser_status.reset()
+        self._health.session_started()
 
         try:
             url = await self.resolve_url()
@@ -369,10 +378,26 @@ class HMIEngineApplication(Application):
             args.append("--ignore-tls")
         if self.config.reload_minutes.value:
             args += ["--reload-minutes", str(self.config.reload_minutes.value)]
+        # Whole MiB, and absent rather than 0: no flag means WebKit's defaults.
+        memory_limit = int(self.config.memory_limit_mb.value or 0)
+        if memory_limit > 0:
+            args += ["--memory-limit-mb", str(memory_limit)]
+        args += ["--status-file", str(STATUS_PATH)]
         return shlex.join(args)
+
+    async def _read_browser_status(self) -> None:
+        """Put what the browser has reported since the last pass onto tags."""
+        for status in self._browser_status.read():
+            updates = self._health.update(status, datetime.now(UTC))
+            for name, value in updates.items():
+                await getattr(self.tags, name).set(value)
 
     async def main_loop(self):
         self._ensure_reload_schedule()
+        try:
+            await self._read_browser_status()
+        except Exception:  # noqa: BLE001 — reporting must never stop the watchdog
+            log.exception("Could not read the browser's status")
         if self.session.running:
             await self.tags.showing.set(True)
             return

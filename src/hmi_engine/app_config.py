@@ -102,6 +102,18 @@ class HMIEngineConfig(config.Schema):
         ),
     )
 
+    memory_limit_mb = config.Number(
+        "Memory Limit (MB)",
+        default=512.0,
+        minimum=0.0,
+        description=(
+            "Memory the page may use, in MB. Past a fraction of it the browser "
+            "frees caches; at 1.25x it restarts the page rather than let the "
+            "device run out and swap. The SIA HMI uses about 200. 0 leaves "
+            "the browser's own default, which never restarts it."
+        ),
+    )
+
     hide_cursor = config.Boolean(
         "Hide Cursor",
         default=True,

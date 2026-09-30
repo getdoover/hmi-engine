@@ -20,6 +20,7 @@ src/hmi_engine/session.py      # sway config generation + process supervision
                                #   (own compositor, or just the browser on the host's)
 src/hmi_engine/browser.py      # fullscreen WebKitGTK window (standalone)
 src/hmi_engine/application.py  # Doover app: config, tags, UI, watchdog
+src/hmi_engine/schedule.py     # daily reload at a time of day (reload_at)
 src/hmi_engine/source.py       # widget-app discovery + URL templating
 ```
 

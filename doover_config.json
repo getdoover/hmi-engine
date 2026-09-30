@@ -123,6 +123,32 @@
                     "x-position": 6,
                     "minimum": 0.0
                 },
+                "reload_at": {
+                    "title": "Reload At",
+                    "x-name": "reload_at",
+                    "x-hidden": false,
+                    "type": [
+                        "string",
+                        "null"
+                    ],
+                    "x-required": false,
+                    "description": "Reload the page once a day at this time, 24-hour HH:MM (e.g. 00:00). Leave blank for no daily reload. The same guard as the interval, but at an hour nobody is using the panel.",
+                    "default": null,
+                    "x-position": 7
+                },
+                "timezone": {
+                    "title": "Timezone",
+                    "x-name": "timezone",
+                    "x-hidden": false,
+                    "type": [
+                        "string",
+                        "null"
+                    ],
+                    "x-required": false,
+                    "description": "The timezone Reload At is in, as an IANA name such as Australia/Brisbane. Blank means UTC.",
+                    "default": "UTC",
+                    "x-position": 8
+                },
                 "hide_cursor": {
                     "title": "Hide Cursor",
                     "x-name": "hide_cursor",
@@ -134,7 +160,7 @@
                     "x-required": false,
                     "description": "Hide the mouse pointer. There is rarely a mouse.",
                     "default": true,
-                    "x-position": 7
+                    "x-position": 9
                 },
                 "ignore_tls_errors": {
                     "title": "Ignore TLS Errors",
@@ -147,7 +173,7 @@
                     "x-required": false,
                     "description": "Accept self-signed certificates. Device-local pages are usually served with one and there is no user to click through the warning.",
                     "default": true,
-                    "x-position": 8
+                    "x-position": 10
                 },
                 "conflicting_services": {
                     "title": "Conflicting Services",
@@ -156,7 +182,7 @@
                     "type": "array",
                     "x-required": true,
                     "description": "Init scripts to stop before starting, for vendor images that run their own splash on the framebuffer and would repaint over this. On an ELPRO Quantum: S01splash and S89splash.",
-                    "x-position": 9,
+                    "x-position": 11,
                     "items": {
                         "title": "Service",
                         "x-name": "service",

@@ -54,6 +54,8 @@ which always works.
 | `rotation` | `0` | 0 / 90 / 180 / 270, for a panel mounted sideways |
 | `renderer` | `auto` | Force `gl` or `pixman` if detection guesses wrong |
 | `reload_interval_min` | `0` | Periodic reload; guards against a page that wedges after weeks |
+| `reload_at` | — | Daily reload at this time, `HH:MM` 24-hour, e.g. `00:00`. Blank for none — see below |
+| `timezone` | `UTC` | The zone `reload_at` is in, as an IANA name such as `Australia/Brisbane` |
 | `hide_cursor` | `true` | There is rarely a mouse |
 | `ignore_tls_errors` | `true` | Device-local pages use self-signed certificates |
 | `conflicting_services` | — | Init scripts to stop first (see below) |
@@ -184,14 +186,44 @@ nothing else, so new JavaScript landing *is* the trigger: a second later the
 browser is sent `SIGHUP` and reloads, bypassing its cache so the new build can't
 be served from the old one. The compositor stays up, so the panel never blanks.
 
-Nothing else causes a reload. Redeploying an unrelated app on the same device
-leaves the page alone, and the engine's own config needs no watching — editing an
+Nothing else causes a reload except the two clocks you can set. Redeploying an
+unrelated app on the same device leaves the page alone, and the engine's own config needs no watching — editing an
 install's config redeploys it, and redeploying this app restarts the container
 with the new config already in hand.
 
 The browser is started by the compositor, not by this app, so it is found by
 scanning `/proc` for `hmi_browser.py` rather than kept as a handle. If no
 browser answers, the session is restarted rather than left showing a stale page.
+
+## Reloading on a schedule
+
+A page left on a wall for weeks can wedge quietly — a leaked timer, a socket that
+never reconnected — and a reload is the cheap guard. There are two, and they can
+be used together:
+
+- `reload_interval_min` reloads every so many minutes, counted from when the
+  browser started. It lands wherever it lands, which is often mid-shift.
+- `reload_at` reloads once a day at a set time, in `timezone`. Pick an hour
+  nobody is at the panel: `00:00` with `Australia/Brisbane` reloads at midnight
+  local time, every night.
+
+The daily reload uses the same `SIGHUP` as a widget redeploy, so the panel
+doesn't blank; if no browser answers, the session is restarted. The log says
+`Scheduled reload at 2026-10-02 00:00 AEST` each time it arms.
+
+A value that isn't a 24-hour `HH:MM`, or a zone name the device doesn't know, is
+logged as a warning and the daily reload stays off — it never falls back to some
+other hour.
+
+Doovits have no real-time clock: they boot with a stale time and NTP steps it
+later, sometimes by weeks. The next reload is re-derived from the wall clock
+every minute, so a step is noticed rather than trusted. If the clock jumps past
+the armed time by more than a few minutes, that reload is skipped rather than
+fired at whatever hour NTP happened to set, and the next night's stands.
+
+On the night clocks go forward, a time that doesn't exist (`02:30` in Sydney)
+fires an hour later by the new clock; on the night they go back, a time that
+happens twice fires once.
 
 ## Vendor splash screens
 
@@ -255,6 +287,7 @@ window it launches gets a standalone script and the interpreter that can load
 | `src/hmi_engine/source.py` | Which app on this device wanted a screen, and the URL that shows it |
 | `src/hmi_engine/display.py` | Detection — connector, card, modes, whether Mesa can help |
 | `src/hmi_engine/session.py` | Compositor config generation and process supervision |
+| `src/hmi_engine/schedule.py` | The daily reload: next occurrence in a timezone, and a clock-step-tolerant loop |
 | `src/hmi_engine/browser.py` | The fullscreen WebKit window (standalone, distro Python) |
 | `src/hmi_engine/application.py` | Doover app: config, tags, UI, watchdog |
 | `tests/` | Detection and config-generation, which have to cope with unfamiliar hardware |

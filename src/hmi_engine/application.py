@@ -11,6 +11,7 @@ from .app_config import HMIEngineConfig
 from .app_tags import HMIEngineTags
 from .app_ui import HMIEngineUI
 from . import display as display_mod
+from .schedule import DailyReload
 from .session import (
     Session,
     build_sway_config,
@@ -67,6 +68,9 @@ class HMIEngineApplication(Application):
         self._reload_task: asyncio.Task | None = None
         #: Which kind of session was last started, for the watchdog's log line.
         self._compositor = "own"
+        self._daily_reload = DailyReload(self._reload_schedule, self._scheduled_reload)
+        self._schedule_task: asyncio.Task | None = None
+        self._ensure_reload_schedule()
         await self.start_session()
 
     async def start_session(self):
@@ -275,7 +279,8 @@ class HMIEngineApplication(Application):
     async def _on_bundle_changed(self, event):
         """The widget's bundle was republished — put it on screen.
 
-        This is the only thing the app reloads for. Config changes need no
+        This is the only event the app reloads for; the rest are clocks
+        (`reload_minutes` in the browser, `reload_at` here). Config changes need no
         subscription: editing an install's config redeploys it, and redeploying
         this app restarts the container with the new config already in hand.
         """
@@ -290,25 +295,51 @@ class HMIEngineApplication(Application):
     async def _reload_after_delay(self) -> None:
         try:
             await asyncio.sleep(self.BUNDLE_DELAY)
-            await self.reload_now()
+            await self.reload_now("after a new widget build")
         except asyncio.CancelledError:
             raise  # a later build superseded this one
         except Exception:  # noqa: BLE001 — a failed reload must not kill the app
             log.exception("Could not reload the display")
 
-    async def reload_now(self) -> None:
+    async def reload_now(self, reason: str) -> None:
         """Re-fetch the page in place, without blanking the panel."""
         if not self.session.running:
             return  # the watchdog owns this case
 
         if reload_page():
-            log.info("Reloaded the page after a new widget build")
+            log.info("Reloaded the page %s", reason)
         else:
             # No browser to signal, but a live compositor — restarting is the
             # honest fallback rather than leaving a stale page on the wall.
             log.warning("No browser process to reload; restarting the session")
             await self.session.stop()
             await self.start_session()
+
+    def _reload_schedule(self) -> tuple[str | None, str | None]:
+        """The daily reload's settings, read fresh on every check.
+
+        No config subscription of its own: pydoover writes deployment-config
+        updates into `self.config`, and a redeploy restarts the container, so
+        reading the values each time is all it takes to re-arm on a change.
+        """
+        return self.config.reload_at.value, self.config.timezone.value
+
+    async def _scheduled_reload(self) -> None:
+        await self.reload_now("on its daily schedule")
+
+    def _ensure_reload_schedule(self) -> None:
+        """Start the daily reload loop, or restart it if it has somehow ended.
+
+        `DailyReload.run` catches everything short of cancellation, so this is
+        belt and braces — but a schedule that silently stopped would only be
+        noticed weeks later, on a wedged panel.
+        """
+        task = self._schedule_task
+        if task is not None and not task.done():
+            return
+        if task is not None and not task.cancelled() and task.exception() is not None:
+            log.error("Scheduled reload loop died; restarting it", exc_info=task.exception())
+        self._schedule_task = asyncio.create_task(self._daily_reload.run())
 
     def _conflicting_service_names(self) -> list[str]:
         """Names out of the `Array` config element.
@@ -341,6 +372,7 @@ class HMIEngineApplication(Application):
         return shlex.join(args)
 
     async def main_loop(self):
+        self._ensure_reload_schedule()
         if self.session.running:
             await self.tags.showing.set(True)
             return
@@ -366,6 +398,7 @@ class HMIEngineApplication(Application):
         await self.start_session()
 
     async def on_shutdown(self):
-        if self._reload_task and not self._reload_task.done():
-            self._reload_task.cancel()
+        for task in (self._reload_task, self._schedule_task):
+            if task and not task.done():
+                task.cancel()
         await self.session.stop()

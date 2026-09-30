@@ -83,6 +83,25 @@ class HMIEngineConfig(config.Schema):
         ),
     )
 
+    reload_at = config.String(
+        "Reload At",
+        default=None,
+        description=(
+            "Reload the page once a day at this time, 24-hour HH:MM (e.g. "
+            "00:00). Leave blank for no daily reload. The same guard as the "
+            "interval, but at an hour nobody is using the panel."
+        ),
+    )
+
+    timezone = config.String(
+        "Timezone",
+        default="UTC",
+        description=(
+            "The timezone Reload At is in, as an IANA name such as "
+            "Australia/Brisbane. Blank means UTC."
+        ),
+    )
+
     hide_cursor = config.Boolean(
         "Hide Cursor",
         default=True,

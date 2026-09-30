@@ -21,6 +21,8 @@ src/hmi_engine/session.py      # sway config generation + process supervision
 src/hmi_engine/browser.py      # fullscreen WebKitGTK window (standalone)
 src/hmi_engine/application.py  # Doover app: config, tags, UI, watchdog
 src/hmi_engine/schedule.py     # daily reload at a time of day (reload_at)
+src/hmi_engine/status.py       # browser's HMI-STATUS lines -> tags, read from a
+                               #   file (never pipe the browser's stdout — see doc)
 src/hmi_engine/source.py       # widget-app discovery + URL templating
 ```
 
@@ -120,6 +122,12 @@ src/hmi_engine/source.py       # widget-app discovery + URL templating
   the apk add**. Layers are additive: stripping in a later RUN leaves the xattr
   in the layer underneath and `docker load` still trips over it. Verify with
   `docker save img | grep -c security.capability` — it must be 0.
+- **`NetworkSession.set_memory_pressure_settings` only affects sessions created
+  after it**, and building a `WebView` without one creates the default session —
+  so it must run before the view is constructed, not after `get_network_session()`.
+- **WebKit's `kill_threshold` is a fraction of `memory_limit`, may exceed 1, and
+  0 means never kill** (the default); ours is 1.25, so 512 MiB kills at 640 and
+  the browser's `web-process-terminated` handler reloads the page.
 - **Vendor splashes fight for the framebuffer.** Symptom is the page showing then
   being replaced a second later. See `conflicting_services` in the README.
 

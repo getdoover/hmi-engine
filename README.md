@@ -56,6 +56,7 @@ which always works.
 | `reload_interval_min` | `0` | Periodic reload; guards against a page that wedges after weeks |
 | `reload_at` | — | Daily reload at this time, `HH:MM` 24-hour, e.g. `00:00`. Blank for none — see below |
 | `timezone` | `UTC` | The zone `reload_at` is in, as an IANA name such as `Australia/Brisbane` |
+| `memory_limit_mb` | `512` | Memory the page may use, in MiB. WebKit sheds memory as it nears it and restarts the page at 1.25×; `0` leaves WebKit's default, which never does — see below |
 | `hide_cursor` | `true` | There is rarely a mouse |
 | `ignore_tls_errors` | `true` | Device-local pages use self-signed certificates |
 | `conflicting_services` | — | Init scripts to stop first (see below) |
@@ -186,7 +187,8 @@ nothing else, so new JavaScript landing *is* the trigger: a second later the
 browser is sent `SIGHUP` and reloads, bypassing its cache so the new build can't
 be served from the old one. The compositor stays up, so the panel never blanks.
 
-Nothing else causes a reload except the two clocks you can set. Redeploying an
+Nothing else causes a reload except the two clocks you can set and the page's
+own process dying ([below](#when-the-page-crashes)). Redeploying an
 unrelated app on the same device leaves the page alone, and the engine's own config needs no watching — editing an
 install's config redeploys it, and redeploying this app restarts the container
 with the new config already in hand.
@@ -224,6 +226,57 @@ fired at whatever hour NTP happened to set, and the next night's stands.
 On the night clocks go forward, a time that doesn't exist (`02:30` in Sydney)
 fires an hour later by the new clock; on the night they go back, a time that
 happens twice fires once.
+
+## When the page crashes
+
+WebKit draws the page in a separate process, `WebKitWebProcess`. If that
+process crashes, or is killed for using too much memory, the browser window
+survives but the page inside it is gone — and it used to stay gone, a blank
+panel until someone restarted the app.
+
+Now the browser loads the page again on its own. What someone at the panel sees
+is the page vanish for about a second and then load from scratch: a widget
+shows its own "Connecting…" for a few seconds while it reconnects, and then the
+panel is back as it was. The compositor stays up throughout.
+
+A page that dies straight after loading would otherwise be reloaded every
+second, pinning the CPU of a device that has nothing to show for it. So after
+three terminations inside five minutes the wait grows — 5, 10, 20, 40 seconds,
+then a minute between attempts — and it goes back to a second once the page has
+stayed up for ten minutes.
+
+### The memory limit
+
+A page on a wall for weeks can leak, and with nothing to stop it WebKit will
+take whatever the device has. On a Doovit — 1.8 GB, about 500 MB free with the
+SIA HMI's ~210 MiB page up — that ends deep in swap, with the kernel's OOM
+killer choosing a victim at random: the page, the device agent, or whatever
+else it lands on.
+
+`memory_limit_mb` hands the problem to WebKit instead. Against the default of
+512 MiB it frees caches from 256 MiB, frees harder from 384 MiB, and at
+640 MiB (1.25×) kills its own web process, which the browser then reloads
+like any other crash. 640 is chosen to land before the device runs out of RAM,
+so the page is restarted cleanly rather than the device grinding into swap.
+The same limit applies to WebKit's network process. Set `0` for WebKit's
+default, which has no limit and never kills. WebKit measures its own
+footprint, which runs a little under the RSS that `top` shows.
+
+### What it reports
+
+| Tag | Meaning |
+|---|---|
+| `page_crashes` | Times the web process has died since the app started. One is an accident; a climbing count is a page that keeps falling over |
+| `last_page_crash` | The latest: why and when, e.g. `exceeded-memory-limit at 2026-10-01 03:12:44 UTC`. Stays after the page recovers |
+| `last_error` | Says the page crashed while it is down, and clears when it loads again |
+| `page_memory_mb` | The web process's RSS in MiB, once a minute. A steady climb over days is a leak heading for the limit |
+
+The browser logs the same things — `The page's web process terminated
+(exceeded-memory-limit); reloading in 1 s`, and a memory line a minute — and
+prints `HMI-STATUS terminated <reason>` and `HMI-STATUS memory <MiB>` lines.
+Those also go into a small file under `/tmp/hmi-runtime/`, which is how the app
+reads them: the browser's stdout is deliberately not piped back to the app,
+because a pipe that fills blocks the compositor.
 
 ## Vendor splash screens
 
@@ -288,6 +341,7 @@ window it launches gets a standalone script and the interpreter that can load
 | `src/hmi_engine/display.py` | Detection — connector, card, modes, whether Mesa can help |
 | `src/hmi_engine/session.py` | Compositor config generation and process supervision |
 | `src/hmi_engine/schedule.py` | The daily reload: next occurrence in a timezone, and a clock-step-tolerant loop |
+| `src/hmi_engine/status.py` | Reading the browser's `HMI-STATUS` lines and turning them into tags |
 | `src/hmi_engine/browser.py` | The fullscreen WebKit window (standalone, distro Python) |
 | `src/hmi_engine/application.py` | Doover app: config, tags, UI, watchdog |
 | `tests/` | Detection and config-generation, which have to cope with unfamiliar hardware |

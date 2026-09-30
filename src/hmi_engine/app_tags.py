@@ -25,3 +25,15 @@ class HMIEngineTags(Tags):
     # Populated when something is wrong; empty when it isn't.
     last_error = Tag("string", default="")
     restarts = Tag("number", default=0)
+
+    #: Times the page's web process has died (crashed, or killed by WebKit at
+    #: `memory_limit_mb`) since the app started. Each is reloaded on its own;
+    #: the count is how you tell a one-off from a page that keeps falling over.
+    page_crashes = Tag("number", default=0)
+    #: The latest of those: reason and UTC time, e.g.
+    #: "exceeded-memory-limit at 2026-10-01 03:12:44 UTC". Kept after the page
+    #: recovers, unlike `last_error`.
+    last_page_crash = Tag("string", default="")
+    #: Resident memory of the page's web process in MiB, updated once a minute.
+    #: A steady climb over days is a leak on its way to the memory limit.
+    page_memory_mb = Tag("number", default=0.0)

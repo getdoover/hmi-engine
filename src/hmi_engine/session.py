@@ -73,6 +73,26 @@ def build_sway_config(
     )
 
 
+#: WebKit settings for the browser, whichever compositor it runs under. Both
+#: target WebKitGTK 2.48.1, the only version Alpine ships:
+#:
+#: - Skia paints on the CPU rather than through GL. On these devices "GL" is
+#:   Mesa's llvmpipe, i.e. the CPU anyway, plus a GL context per painting
+#:   thread; Igalia recommends CPU painting on weak GPUs. Measured on a Doovit
+#:   kiosk (SIA HMI, idle): ~2-3 points less CPU across the browser processes
+#:   and ~17 MB less private memory in the web process, identical rendering.
+#: - The DFG JIT's loop unrolling is off. Upstream says it "is known to cause
+#:   compiler crashes"; 2.48.2 turned it off by default, 2.48.1 still has it on,
+#:   and a page left up for weeks eventually JIT-compiles every hot loop. No
+#:   measurable cost.
+#:
+#: The web process inherits these directly: its sandbox is off (below).
+WEBKIT_ENV = {
+    "WEBKIT_SKIA_ENABLE_CPU_RENDERING": "1",
+    "JSC_useLoopUnrolling": "false",
+}
+
+
 def session_environment(display: Display, force_renderer: str = "auto") -> dict[str, str]:
     """Environment for the compositor and everything it launches.
 
@@ -95,6 +115,7 @@ def session_environment(display: Display, force_renderer: str = "auto") -> dict[
         "GDK_BACKEND": "wayland",
         # WebKit's sandbox needs a user namespace the container may not grant.
         "WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS": "1",
+        **WEBKIT_ENV,
     }
 
     if not accelerated:
@@ -124,6 +145,7 @@ def host_environment(compositor: HostCompositor, force_renderer: str = "auto") -
         "GDK_BACKEND": "wayland",
         # WebKit's sandbox needs a user namespace the container may not grant.
         "WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS": "1",
+        **WEBKIT_ENV,
     }
 
     # Only an explicit override. Mesa inside the container often cannot reach

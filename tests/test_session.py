@@ -201,3 +201,15 @@ class TestHostEnvironment:
         env = host_environment(host(), "pixman")
         assert env["LIBGL_ALWAYS_SOFTWARE"] == "1"
         assert env["GALLIUM_DRIVER"] == "llvmpipe"
+
+
+def test_webkit_env_reaches_the_browser_under_both_compositors():
+    from hmi_engine.session import WEBKIT_ENV
+
+    assert WEBKIT_ENV == {
+        "WEBKIT_SKIA_ENABLE_CPU_RENDERING": "1",
+        "JSC_useLoopUnrolling": "false",
+    }
+    for env in (session_environment(make()), host_environment(host())):
+        for key, value in WEBKIT_ENV.items():
+            assert env[key] == value
